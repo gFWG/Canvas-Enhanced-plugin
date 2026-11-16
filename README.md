@@ -20,8 +20,6 @@ Obsidian Canvas is great for visual thinking, but editing Markdown cards directl
 ## Recommended Setting for Large Canvases
 The first H1 is always used as the headline. Headline mode uses only the first `[!note]` after that H1 and before the next H1. In the Note title, text before the first `|` becomes the optional badge, and text after it becomes the category (for example, `P01 | System Check` displays `P01` as the badge and `System Check` as the category). Without a `|`, the full title is shown as the category with no badge. The Note body becomes the subtitle. Other callouts and headings remain part of the Markdown but are not shown on the headline card.
 
-When creating an Obsidian Canvas with AI, refer to the [Headline Canvas skill](.github/skills/headline-canvas/SKILL.md) for guidance on writing headline-mode cards.
-
 <img width="890" height="663" alt="image" src="https://github.com/user-attachments/assets/62c85f9f-3942-43b5-924a-3f8d8517472d" />
 
 <img width="894" height="247" alt="image" src="https://github.com/user-attachments/assets/ee7b96c2-2740-4d55-b884-038892f872f0" />
@@ -102,13 +100,17 @@ See [GitHub Releases](https://github.com/ShawnSWu/Obsidian-Canvas-Markdown-Side-
 
 Issues and pull requests welcome at [github.com/ShawnSWu/Obsidian-Canvas-Markdown-Side-Editor/issues](https://github.com/ShawnSWu/Obsidian-Canvas-Markdown-Side-Editor/issues).
 
-Local development:
+Local development on macOS (see the [development guide](docs/Development.md) for setup and loading the plugin in Obsidian):
 
 ```bash
-npm install
+fnm use        # reads .node-version
+npm ci         # installs the locked dependencies
 npm run dev    # esbuild watch
 npm test       # vitest
+npm run build  # type-check and complete plugin in release/
 ```
+
+Copy the contents of `release/` (`main.js`, `manifest.json`, `styles.css`, and `LICENSE`) into `<vault>/.obsidian/plugins/canvas-markdown-side-editor/` to install a production build.
 
 ---
 

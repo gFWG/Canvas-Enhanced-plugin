@@ -1,6 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import { copyFile } from "node:fs/promises";
 
 const banner =
 `/*
@@ -37,13 +38,19 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: "main.js",
+	outfile: prod ? "release/main.js" : "main.js",
 	minify: prod,
 });
 
 if (prod) {
-	await context.rebuild();
-	process.exit(0);
+	try {
+		await context.rebuild();
+		for (const file of ["manifest.json", "styles.css", "LICENSE"]) {
+			await copyFile(file, `release/${file}`);
+		}
+	} finally {
+		await context.dispose();
+	}
 } else {
 	await context.watch();
 }
