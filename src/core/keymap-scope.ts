@@ -2,7 +2,7 @@
 // Canvas's "cut selected node" hotkey runs at a level that the plain CM6
 // keymap (even with stopPropagation) cannot reach — pushing this scope
 // makes Obsidian's keymap dispatcher check our Mod+X binding first.
-import { App, Scope } from 'obsidian';
+import { App, Notice, Scope } from 'obsidian';
 import type { EditorView } from '@codemirror/view';
 
 export class SideEditorScope {
@@ -23,7 +23,7 @@ export class SideEditorScope {
     const scope = new Scope(this.app.scope);
     scope.register(['Mod'], 'x', () => {
       const cm = this.getCmView();
-      const ae = document.activeElement;
+      const ae = cm?.contentDOM.ownerDocument.activeElement;
       if (!cm || !ae || !cm.contentDOM.contains(ae)) return true;
       const sel = cm.state.selection.main;
       let from = sel.from;
@@ -35,12 +35,25 @@ export class SideEditorScope {
       }
       if (from === to) return false;
       const text = cm.state.sliceDoc(from, to);
-      try { void navigator.clipboard.writeText(text); } catch {}
-      cm.dispatch({
-        changes: { from, to, insert: '' },
-        selection: { anchor: from },
-        userEvent: 'delete.cut',
-      });
+      const state = cm.state;
+      try {
+        const clipboard = cm.contentDOM.ownerDocument.defaultView?.navigator.clipboard;
+        if (!clipboard) throw new Error('Clipboard unavailable');
+        void clipboard.writeText(text).then(() => {
+          // Never delete text until copying succeeds, or delete from another
+          // document if a card switch/edit happened while copying.
+          const active = cm.contentDOM.ownerDocument.activeElement;
+          if (this.getCmView() !== cm || !active || !cm.contentDOM.contains(active)
+            || cm.state.doc !== state.doc || !cm.state.selection.eq(state.selection)) return;
+          cm.dispatch({
+            changes: { from, to, insert: '' },
+            selection: { anchor: from },
+            userEvent: 'delete.cut',
+          });
+        }).catch(() => { new Notice('Could not copy to the clipboard. The text was kept.'); });
+      } catch {
+        new Notice('Could not copy to the clipboard. The text was kept.');
+      }
       return false;
     });
     this.app.keymap.pushScope(scope);

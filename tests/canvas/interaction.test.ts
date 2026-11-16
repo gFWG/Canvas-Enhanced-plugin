@@ -4,8 +4,7 @@ import { CanvasInteraction, type InteractionDelegate } from '../../src/canvas/in
 import type { CanvasLikeView } from '../../src/types';
 
 // End-to-end-ish coverage of the pointer routing: a blank single click must
-// close the panel (saveAndClose), a click on a card must open it — even
-// while Canvas's selection still holds a stale id.
+// close the panel (saveAndClose), and clicks select without opening an editor.
 
 const NODE = { id: 'n1', type: 'text', x: 0, y: 0, width: 100, height: 100, text: 'hello' };
 
@@ -37,6 +36,7 @@ function makeView(opts?: { selection?: unknown }) {
 function makeDelegate() {
   const panelEl = document.createElement('div');
   document.body.appendChild(panelEl);
+  panelEl.classList.add('open');
   const delegate: InteractionDelegate = {
     getPanelEl: () => panelEl,
     getOpenNodeId: () => null,
@@ -79,7 +79,7 @@ describe('CanvasInteraction pointer routing', () => {
     interaction.detach();
   });
 
-  it('clicking a card opens it via geometric hit test', async () => {
+  it('clicking a card selects it without opening the side editor', async () => {
     const { view, wrapper } = makeView();
     const { delegate } = makeDelegate();
     const interaction = new CanvasInteraction(new App(), delegate);
@@ -89,9 +89,8 @@ describe('CanvasInteraction pointer routing', () => {
     pointer(wrapper, 'pointerup', 50, 40);
     await settle(10);
 
-    expect(delegate.openNode).toHaveBeenCalledTimes(1);
-    expect((delegate.openNode as any).mock.calls[0][1]).toMatchObject({ id: 'n1' });
-    expect(delegate.saveAndClose).not.toHaveBeenCalled();
+    expect(delegate.openNode).not.toHaveBeenCalled();
+    expect(delegate.saveAndClose).toHaveBeenCalledTimes(1);
     interaction.detach();
   });
 

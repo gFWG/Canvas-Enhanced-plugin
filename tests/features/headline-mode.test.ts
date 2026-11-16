@@ -1,38 +1,41 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { Window } from 'happy-dom';
 import {
   applyHeadlineMode,
   clampHeadlineSize,
+  clearHeadlineCard,
   parseNoteTitle,
+  refreshHeadlineCard,
   removeHeadlineMode,
-  selectHeadlineParts,
+  selectOutlineParts,
   syncSubtitleEllipsis,
 } from '../../src/features/headline-mode';
-import { DEFAULT_SETTINGS, HEADLINE_SIZE_LIMITS } from '../../src/settings';
+import { DEFAULT_SETTINGS } from '../../src/settings';
 
 const styles = readFileSync('styles.css', 'utf8');
-const enable = () => applyHeadlineMode({ ...DEFAULT_SETTINGS, headlineMode: true });
-const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+const note = (id: string, title = 'Note', body = '<p>Subtitle <a href="#link">link</a></p>') =>
+  `<div class="callout" data-callout="note" id="${id}"><div class="callout-title"><div class="callout-title-inner">${title}</div></div><div class="callout-content">${body}</div></div>`;
 
-function card(content: string): HTMLElement {
+function card(content: string, title = ''): HTMLElement {
   const node = document.createElement('div');
   node.className = 'canvas-node';
-  node.innerHTML = `<div class="markdown-preview-view markdown-rendered"><div class="markdown-preview-sizer">${content}</div></div>`;
+  node.innerHTML = `<div class="canvas-node-content"><div class="mod-header">${title}</div><div class="markdown-preview-view markdown-rendered"><div class="markdown-preview-sizer">${content}</div></div></div>`;
   document.body.appendChild(node);
   return node;
 }
-
-const note = (id: string, title = 'Note', body = '<p>Readable <a href="#link">link</a></p>', type = 'note') =>
-  `<div class="callout" data-callout="${type}" id="${id}"><div class="callout-title"><svg></svg><div class="callout-title-inner">${title}</div></div><div class="callout-content">${body}</div></div>`;
-
-const display = (element: Element): string => getComputedStyle(element).display;
+const enable = () => applyHeadlineMode({ ...DEFAULT_SETTINGS, headlineMode: true });
+const outline = (node: HTMLElement) => refreshHeadlineCard(node, { kind: 'outline' });
+const narrow = (node: HTMLElement, heading = 'Selected', level = 2) =>
+  refreshHeadlineCard(node, { kind: 'heading', heading: { heading, level } });
 
 beforeEach(() => {
   document.body.innerHTML = '';
   const style = document.createElement('style');
   style.id = 'headline-test-styles';
-  style.textContent = `.callout { background-color: rgb(12, 34, 56); } .callout-title { display: flex; } ${styles}`;
-  document.head.appendChild(style);
+  style.textContent = styles;
+  document.head.append(style);
+  enable();
 });
 
 afterEach(() => {
@@ -42,387 +45,309 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('parseNoteTitle', () => {
-  it('splits identifier and category at the first pipe only', () => {
-    expect(parseNoteTitle('P01 | 系統檢查')).toEqual({ identifier: 'P01', category: '系統檢查' });
-    expect(parseNoteTitle('P01 | A | B')).toEqual({ identifier: 'P01', category: 'A | B' });
-    expect(parseNoteTitle('  P02  |  Ops  ')).toEqual({ identifier: 'P02', category: 'Ops' });
-  });
-
-  it('treats a pipeless title as category only', () => {
-    expect(parseNoteTitle('系統檢查')).toEqual({ identifier: '', category: '系統檢查' });
-  });
-
-  it('keeps empty sides empty', () => {
-    expect(parseNoteTitle('P01 |')).toEqual({ identifier: 'P01', category: '' });
-    expect(parseNoteTitle('| 系統檢查')).toEqual({ identifier: '', category: '系統檢查' });
-  });
-
-  it('treats empty and default callout titles as no title', () => {
-    expect(parseNoteTitle('')).toEqual({ identifier: '', category: '' });
-    expect(parseNoteTitle('   ')).toEqual({ identifier: '', category: '' });
+describe('headline content', () => {
+  it('parses badge and category without treating default Note as a title', () => {
+    expect(parseNoteTitle(' P01 | Systems | East ')).toEqual({ identifier: 'P01', category: 'Systems | East' });
+    expect(parseNoteTitle('Category')).toEqual({ identifier: '', category: 'Category' });
     expect(parseNoteTitle('Note')).toEqual({ identifier: '', category: '' });
-    expect(parseNoteTitle('note')).toEqual({ identifier: '', category: '' });
-    expect(parseNoteTitle('Warning', 'warning')).toEqual({ identifier: '', category: '' });
-    expect(parseNoteTitle('Notebook')).toEqual({ identifier: '', category: 'Notebook' });
-  });
-});
-
-describe('selectHeadlineParts', () => {
-  const root = (content: string): Element => {
-    const el = document.createElement('div');
-    el.innerHTML = content;
-    return el;
-  };
-
-  it('selects the first H1 and the first Note below it', () => {
-    const r = root(`<h1 id="t">T</h1>${note('n1', 'A')}${note('n2', 'B')}<h2>sub</h2>`);
-    const { title, note: n } = selectHeadlineParts(r);
-    expect(title?.textContent).toBe('T');
-    expect(n?.id).toBe('n1');
+    expect(parseNoteTitle('| category')).toEqual({ identifier: '', category: 'category' });
   });
 
-  it('ignores Notes before the first H1', () => {
-    const r = root(`${note('early')}<h1 id="t">T</h1>`);
-    expect(selectHeadlineParts(r).note).toBeNull();
-    const withLater = root(`${note('early')}<h1>T</h1>${note('late')}`);
-    expect(selectHeadlineParts(withLater).note?.id).toBe('late');
+  it('selects every own heading and the first qualifying Note per H1', () => {
+    const root = document.createElement('div');
+    root.innerHTML = `${note('early', 'Early')}<h2>Before</h2><h1>One</h1><h2>Sub</h2>${note('one', 'A | One')}${note('ignored', 'Ignore')}<h1>Two</h1>${note('two', 'B | Two')}<h6>Last</h6><div class="markdown-embed"><h1>Embed</h1>${note('embedded')}</div><div class="callout" data-callout="warning"><h1>Nested</h1>${note('nested')}</div>`;
+    const parts = selectOutlineParts(root);
+    expect(parts.map(part => part.title.textContent)).toEqual(['Before', 'One', 'Sub', 'Two', 'Last']);
+    expect(parts.map(part => part.note?.id ?? null)).toEqual([null, 'one', null, 'two', null]);
   });
 
-  it('ignores Notes after the second H1', () => {
-    const r = root(`<h1>First</h1><h1>Second</h1>${note('late')}`);
-    const { title, note: n } = selectHeadlineParts(r);
-    expect(title?.textContent).toBe('First');
-    expect(n).toBeNull();
+  it('renders an H1–H6 outline and associates metadata and subtitles with the right H1', () => {
+    const node = card(`<h1 id="first">One</h1><h2 id="sub">Sub</h2>${note('one', 'A | One')}<h3>Three</h3><h4>Four</h4><h5>Five</h5><h6>Six</h6><h1 id="second">Two</h1>${note('two', 'B | Two')}<p id="body">Hidden body</p>`);
+    outline(node);
+    const headings = Array.from(node.querySelectorAll('.cmside-headline-title'));
+    expect(headings.map(h => h.textContent)).toEqual(['One', 'Sub', 'Three', 'Four', 'Five', 'Six', 'Two']);
+    const rows = Array.from(node.querySelectorAll('.cmside-hl-meta'));
+    expect(rows.map(row => row.textContent)).toEqual(['AOne', 'BTwo']);
+    expect(node.querySelector('#first')?.previousElementSibling).toBe(rows[0]);
+    expect(node.querySelector('#second')?.previousElementSibling).toBe(rows[1]);
+    expect(node.querySelector('#one')?.classList.contains('cmside-headline-note')).toBe(true);
+    expect(node.querySelector('#two')?.classList.contains('cmside-headline-note')).toBe(true);
+    expect(getComputedStyle(node.querySelector('#body')!).display).toBe('none');
+    // The first subtitle visually follows its owning H1 even when it occurs after H2.
+    expect(Number((node.querySelector('#first') as HTMLElement).style.order)).toBeLessThan(Number((node.querySelector('#one') as HTMLElement).style.order));
+    expect(Number((node.querySelector('#one') as HTMLElement).style.order)).toBeLessThan(Number((node.querySelector('#sub') as HTMLElement).style.order));
+    expect(getComputedStyle(node.querySelector('.cmside-headline-root')!).overflowY).toBe('hidden');
+    // Separate fixtures avoid Happy DOM's cached :not() ancestor matching.
+    const focused = node.cloneNode(true) as HTMLElement;
+    focused.classList.add('is-focused');
+    document.body.append(focused);
+    expect(getComputedStyle(focused.querySelector('.cmside-headline-root')!).overflowY).toBe('auto');
   });
 
-  it('ignores H2 headings and Notes nested inside other callouts', () => {
-    const nested = `<div class="callout" data-callout="warning"><div class="callout-content"><h1 id="nested-h1">Nested</h1>${note('nested')}</div></div>`;
-    const r = root(`${nested}<h2 id="h2">Not it</h2><h1 id="t">T</h1>${note('n1')}`);
-    const { title, note: n } = selectHeadlineParts(r);
-    expect(title?.id).toBe('t');
-    expect(n?.id).toBe('n1');
+  it('accepts H2-only notes without a placeholder and marks genuinely heading-free notes empty', () => {
+    const noH1 = card('<h2>Heading</h2><p>Body</p>');
+    const empty = card('<p>Body</p>');
+    outline(noH1);
+    outline(empty);
+    expect(noH1.querySelector('.cmside-headline-title')?.textContent).toBe('Heading');
+    expect(noH1.querySelector('.cmside-headline-empty')).toBeNull();
+    expect(empty.querySelector('.cmside-headline-empty')).not.toBeNull();
   });
 
-  it('returns nulls without an H1', () => {
-    const r = root(`${note('n1')}<p>text</p>`);
-    expect(selectHeadlineParts(r)).toEqual({ title: null, note: null });
-  });
-});
-
-describe('headline mode dashboard rendering', () => {
-  it('applies the configured tier sizes and clamps invalid values', () => {
-    applyHeadlineMode({
-      ...DEFAULT_SETTINGS,
-      headlineMode: true,
-      headlineH1Size: 30,
-      headlineBadgeSize: 28,
-      headlineCategorySize: 14,
-      headlineSubtitleSize: 20,
+  it('retains off-screen native sections and restores the virtual scroller on exit', () => {
+    const node = card('');
+    const preview = node.querySelector('.markdown-preview-view') as HTMLElement;
+    const sizer = preview.querySelector('.markdown-preview-sizer') as HTMLElement;
+    const pusher = document.createElement('div');
+    pusher.className = 'markdown-preview-pusher';
+    const first = document.createElement('div');
+    first.className = 'el-h1';
+    first.innerHTML = '<h1>First</h1>';
+    const paragraph = document.createElement('div');
+    paragraph.className = 'el-p';
+    paragraph.innerHTML = '<p>Hidden body</p>';
+    const second = document.createElement('div');
+    second.className = 'el-h2';
+    second.innerHTML = '<h2>Last heading</h2>';
+    const subtitle = document.createElement('div');
+    subtitle.innerHTML = note('late-note', 'A | Category');
+    const original = vi.fn(function() {
+      expect(node.classList.contains('cmside-headline-card')).toBe(false);
+      sizer.replaceChildren(pusher, first);
+      pusher.style.marginBottom = '600px';
+      sizer.style.minHeight = '900px';
     });
-    expect(document.body.style.getPropertyValue('--cmside-h1-size')).toBe('30');
-    expect(document.body.style.getPropertyValue('--cmside-badge-size')).toBe('28');
-    expect(document.body.style.getPropertyValue('--cmside-category-size')).toBe('14');
-    expect(document.body.style.getPropertyValue('--cmside-subtitle-size')).toBe('20');
-    expect(document.body.style.getPropertyValue('--cmside-note-size')).toBe('');
-    expect(clampHeadlineSize(Number.NaN, 22, 5, 60)).toBe(22);
-    expect(clampHeadlineSize(100, 22, 5, 60)).toBe(60);
+    const resetCompute = vi.fn();
+    const queueRender = vi.fn();
+    const renderer = {
+      previewEl: preview,
+      sizerEl: sizer,
+      pusherEl: pusher,
+      sections: [first, paragraph, second, subtitle].map(el => ({ el, resetCompute })),
+      updateVirtualDisplay: original,
+      queueRender,
+    };
+    original(); // Simulate Obsidian detaching off-screen sections.
+    original.mockClear();
+    refreshHeadlineCard(node, { kind: 'outline', renderer });
+
+    expect(Array.from(node.querySelectorAll('.cmside-headline-title')).map(el => el.textContent)).toEqual(['First', 'Last heading']);
+    expect(sizer.children[0]).toBe(pusher);
+    expect(getComputedStyle(pusher).display).not.toBe('none');
+    expect(getComputedStyle(first).display).toBe('block');
+    expect(getComputedStyle(paragraph).display).toBe('block');
+    expect(getComputedStyle(paragraph.querySelector('p')!).display).toBe('none');
+    expect(pusher.style.marginBottom).toBe('0px');
+    expect(sizer.style.minHeight).toBe('');
+    expect(Number(first.style.order)).toBeLessThan(Number(subtitle.style.order));
+    expect(Number(subtitle.style.order)).toBeLessThan(Number(second.style.order));
+
+    renderer.updateVirtualDisplay();
+    expect(original).not.toHaveBeenCalled();
+    expect(sizer.contains(second)).toBe(true);
+    clearHeadlineCard(node);
+    expect(renderer.updateVirtualDisplay).toBe(original);
+    expect(original).toHaveBeenCalledOnce();
+    expect(resetCompute).toHaveBeenCalledTimes(4);
+    expect(queueRender).toHaveBeenCalledOnce();
+    expect(sizer.contains(second)).toBe(false);
+    expect(pusher.style.marginBottom).toBe('600px');
   });
 
-  it('falls back to default tier sizes when settings are missing', () => {
-    enable();
-    expect(document.body.style.getPropertyValue('--cmside-h1-size')).toBe('25');
-    expect(document.body.style.getPropertyValue('--cmside-badge-size')).toBe('16');
-    expect(document.body.style.getPropertyValue('--cmside-category-size')).toBe('18');
-    expect(document.body.style.getPropertyValue('--cmside-subtitle-size')).toBe('11');
+  it('leaves a later virtualizer wrapper in place but deactivates the outline hook', () => {
+    const node = card('');
+    const preview = node.querySelector('.markdown-preview-view') as HTMLElement;
+    const sizer = preview.querySelector('.markdown-preview-sizer') as HTMLElement;
+    const pusher = document.createElement('div');
+    pusher.className = 'markdown-preview-pusher';
+    const section = document.createElement('div');
+    section.innerHTML = '<h1>Heading</h1>';
+    const native = vi.fn();
+    const renderer = { previewEl: preview, sizerEl: sizer, pusherEl: pusher, sections: [{ el: section }], updateVirtualDisplay: native };
+    refreshHeadlineCard(node, { kind: 'outline', renderer });
+    const pluginWrapper = renderer.updateVirtualDisplay;
+    const laterWrapper = vi.fn(() => pluginWrapper.call(renderer));
+    renderer.updateVirtualDisplay = laterWrapper;
+    clearHeadlineCard(node);
+    expect(renderer.updateVirtualDisplay).toBe(laterWrapper);
+    expect(native).toHaveBeenCalledOnce();
   });
 
-  it('places each comfortable default at the middle of its slider', () => {
-    for (const key of Object.keys(HEADLINE_SIZE_LIMITS) as Array<keyof typeof HEADLINE_SIZE_LIMITS>) {
-      const { min, max } = HEADLINE_SIZE_LIMITS[key];
-      expect((min + max) / 2).toBe(DEFAULT_SETTINGS[key]);
-    }
+  it('does not create vertical gaps for hidden native sections before headings', () => {
+    const sections = Array.from({ length: 84 }, (_, index) =>
+      `<div class="el-p" id="hidden-${index}"><p>Hidden body ${index}</p></div>`).join('');
+    const node = card(`${sections}<div class="el-h1" id="visible-section"><h1>Visible</h1></div>`);
+    outline(node);
+    const preview = node.querySelector('.markdown-preview-view') as HTMLElement;
+    const sizer = node.querySelector('.markdown-preview-sizer') as HTMLElement;
+    const hidden = node.querySelector('#hidden-0') as HTMLElement;
+    const visible = node.querySelector('#visible-section') as HTMLElement;
+
+    expect(getComputedStyle(preview).display).toBe('block');
+    expect(Number.parseFloat(getComputedStyle(sizer).gap)).toBe(0);
+    expect(getComputedStyle(sizer).alignItems).toBe('stretch');
+    expect(hidden.classList.contains('cmside-headline-section')).toBe(false);
+    expect(getComputedStyle(hidden).display).toBe('block');
+    expect(Number.parseFloat(getComputedStyle(hidden).height)).toBe(0);
+    expect(Number.parseFloat(getComputedStyle(hidden).margin)).toBe(0);
+    expect(visible.classList.contains('cmside-headline-section')).toBe(true);
+    expect(Number.parseFloat(getComputedStyle(visible).height)).not.toBe(0);
   });
 
-  it('renders badge, category, headline and subtitle from H1 + "P01 | 系統檢查" Note', () => {
-    const node = card(`<div><h1>連線與服務檢查</h1>${note('n1', 'P01 | 系統檢查', '<p>確認資料庫連線狀態。</p><p>檢查 API 服務是否正常。</p>')}<p id="body">Hidden body</p></div>`);
-    enable();
-    const title = node.querySelector('h1')!;
-    const meta = node.querySelector('.cmside-hl-meta')!;
-    const badge = meta.querySelector('.cmside-hl-badge')!;
-    const category = meta.querySelector('.cmside-hl-category')!;
-    expect(badge.textContent).toBe('P01');
-    expect(category.textContent).toBe('系統檢查');
-    // Metadata row sits immediately above the headline.
-    expect(title.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
-    expect(title.classList.contains('cmside-headline-title')).toBe(true);
-    // Subtitle: the Note body renders, its callout title/syntax do not.
-    const n1 = node.querySelector('#n1')!;
-    expect(n1.classList.contains('cmside-headline-note')).toBe(true);
-    expect(display(n1)).not.toBe('none');
-    expect(display(n1.querySelector('.callout-title')!)).toBe('none');
-    for (const p of Array.from(n1.querySelectorAll('.callout-content p'))) {
-      expect(display(p)).not.toBe('none');
-    }
-    expect(display(node.querySelector('#body')!)).toBe('none');
-    // Meta spans keep their text free of the callout title's raw syntax.
-    expect(meta.textContent).not.toContain('[!note]');
+  it('leaves a native virtualized preview unmodified when its renderer is unavailable', () => {
+    const node = card('<div class="markdown-preview-pusher"></div><div class="el-h1"><h1>Partial</h1></div>');
+    outline(node);
+    expect(node.classList.contains('cmside-headline-card')).toBe(false);
+    expect(node.querySelector('.cmside-headline-empty')).toBeNull();
   });
 
-  it('renders category only when the Note title has no pipe', () => {
-    const node = card(`<h1>Title</h1>${note('n1', '系統檢查')}`);
-    enable();
-    const badge = node.querySelector('.cmside-hl-badge') as HTMLElement;
-    const category = node.querySelector('.cmside-hl-category')!;
-    expect((badge as HTMLElement).style.display).toBe('none');
-    expect(badge.textContent).toBe('');
-    expect(category.textContent).toBe('系統檢查');
-  });
-
-  it('renders no metadata row when the Note has no title, but keeps the subtitle', () => {
-    const node = card(`<h1>Title</h1>${note('n1', 'Note', '<p>確認所有必要依賴均已啟動。</p>')}`);
-    enable();
-    expect(node.querySelector('.cmside-hl-meta')).toBeNull();
-    const n1 = node.querySelector('#n1')!;
-    expect(n1.classList.contains('cmside-headline-note')).toBe(true);
-    expect(display(n1.querySelector('.callout-content p')!)).not.toBe('none');
-  });
-
-  it('supports multiline Note bodies with paragraph separation', () => {
-    const node = card(`<h1>Title</h1>${note('n1', 'P01 | Check', '<p>Line one.</p><p>Line two.</p><ul><li>Line three</li></ul>')}`);
-    enable();
-    const content = node.querySelector('#n1 .callout-content')!;
-    expect(content.querySelectorAll('p')).toHaveLength(2);
-    for (const el of Array.from(content.querySelectorAll('p, ul, li'))) {
-      expect(display(el)).not.toBe('none');
-    }
-  });
-
-  it('ignores a Note placed before the first H1', () => {
-    const node = card(`<div>${note('early', 'P00 | Early')}</div><div><h1>Title</h1><p id="body">x</p></div>`);
-    enable();
-    expect(node.querySelector('.cmside-headline-note')).toBeNull();
-    expect(node.querySelector('.cmside-hl-meta')).toBeNull();
-    expect(display(node.querySelector('#early')!)).toBe('none');
-  });
-
-  it('uses only the first Note when several follow the H1', () => {
-    const node = card(`<h1>Title</h1>${note('n1', 'P01 | First')}${note('n2', 'P02 | Second')}`);
-    enable();
-    expect(node.querySelectorAll('.cmside-headline-note')).toHaveLength(1);
-    expect(node.querySelector('.cmside-headline-note')!.id).toBe('n1');
-    expect(node.querySelector('.cmside-hl-badge')!.textContent).toBe('P01');
-    expect(display(node.querySelector('#n2')!)).toBe('none');
-  });
-
-  it('ignores a Note placed after the second H1', () => {
-    const node = card(`<div><h1>First</h1><p id="p1">x</p></div><div><h1 id="second-h1">Second</h1>${note('late', 'P09 | Late')}</div>`);
-    enable();
-    expect(node.querySelector('.cmside-headline-title')!.textContent).toBe('First');
-    expect(node.querySelector('.cmside-headline-note')).toBeNull();
-    expect(node.querySelector('.cmside-hl-meta')).toBeNull();
-    expect(display(node.querySelector('#second-h1')!)).toBe('none');
-    expect(display(node.querySelector('#late')!)).toBe('none');
-  });
-
-  it('uses the first of multiple H1 headings as the headline', () => {
-    const node = card(`<div><h1>Alpha</h1>${note('n1', 'P01 | Check')}</div><div><h1 id="beta">Beta</h1></div>`);
-    enable();
-    expect(node.querySelectorAll('.cmside-headline-title')).toHaveLength(1);
-    expect(node.querySelector('.cmside-headline-title')!.textContent).toBe('Alpha');
-    expect(display(node.querySelector('#beta')!)).toBe('none');
-  });
-
-  it('renders only the headline when the Note is missing', () => {
-    const node = card('<h1>Lonely title</h1><p id="body">Hidden</p>');
-    enable();
-    expect(node.querySelector('.cmside-headline-title')!.textContent).toBe('Lonely title');
-    expect(node.querySelector('.cmside-headline-note')).toBeNull();
-    expect(node.querySelector('.cmside-hl-meta')).toBeNull();
-    const root = node.querySelector('.cmside-headline-root')!;
-    expect(root.classList.contains('cmside-headline-has-note')).toBe(false);
-    expect(root.classList.contains('cmside-headline-empty')).toBe(false);
-    expect(display(node.querySelector('#body')!)).toBe('none');
-  });
-
-  it('renders metadata without a subtitle when the Note body is empty', () => {
-    const node = card(`<h1>Title</h1>${note('n1', 'P01 | 系統檢查', '')}`);
-    enable();
-    expect(node.querySelector('.cmside-hl-badge')!.textContent).toBe('P01');
-    expect(node.querySelector('#n1 .callout-content')!.textContent!.trim()).toBe('');
-  });
-
-  it('marks cards without an H1 with the empty-headline hook', () => {
-    const node = card('<p id="body">No heading here</p>');
-    enable();
-    const root = node.querySelector('.cmside-headline-root')!;
-    expect(root.classList.contains('cmside-headline-empty')).toBe(true);
-    expect(node.querySelector('.cmside-headline-title')).toBeNull();
-    expect(display(node.querySelector('#body')!)).toBe('none');
-  });
-
-  it.each(['is-editing', 'editing'])('leaves full content and native callout layout intact in %s mode', editingClass => {
-    const node = card(`<h1>Title</h1><h2 id="sub">Subtitle</h2><p id="body">Body</p>${note('n1', 'P01 | Check')}${note('n2', 'P02 | Other')}`);
-    enable();
-    node.classList.add(editingClass);
-    for (const element of Array.from(node.querySelectorAll('h2, p, .callout'))) {
-      expect(display(element)).not.toBe('none');
-    }
-    expect(display(node.querySelector('#n1 .callout-title')!)).toBe('flex');
-  });
-
-  it('refreshes after reordering, callout type changes and title edits', async () => {
-    enable();
-    const node = card(`<h1>Title</h1>${note('n1', 'P01 | First')}${note('n2', 'P02 | Second')}`);
-    await flush();
-    const first = node.querySelector('#n1')!;
-    const second = node.querySelector('#n2')!;
-    expect(first.classList.contains('cmside-headline-note')).toBe(true);
-    expect(node.querySelector('.cmside-hl-badge')!.textContent).toBe('P01');
+  it('updates rows after rerender without duplication, and removes stale metadata', () => {
+    const node = card(`<h1>Heading</h1>${note('first', 'A | One')}${note('second', 'B | Two')}`);
+    outline(node);
+    const first = node.querySelector('#first')!;
+    const second = node.querySelector('#second')!;
+    const row = node.querySelector('.cmside-hl-meta');
+    outline(node);
+    expect(node.querySelector('.cmside-hl-meta')).toBe(row);
+    expect(node.querySelectorAll('.cmside-hl-meta')).toHaveLength(1);
     first.before(second);
-    await flush();
-    expect(second.classList.contains('cmside-headline-note')).toBe(true);
+    outline(node);
+    expect(node.querySelector('.cmside-hl-meta')?.textContent).toBe('BTwo');
     expect(first.classList.contains('cmside-headline-note')).toBe(false);
-    expect(node.querySelector('.cmside-hl-badge')!.textContent).toBe('P02');
     second.setAttribute('data-callout', 'warning');
-    await flush();
-    expect(first.classList.contains('cmside-headline-note')).toBe(true);
-    expect(second.classList.contains('cmside-headline-note')).toBe(false);
-    expect(node.querySelector('.cmside-hl-badge')!.textContent).toBe('P01');
-    // Editing the Note title updates badge/category in place.
-    first.querySelector('.callout-title-inner')!.textContent = 'P07 | Renamed';
-    await flush();
-    expect(node.querySelector('.cmside-hl-badge')!.textContent).toBe('P07');
-    expect(node.querySelector('.cmside-hl-category')!.textContent).toBe('Renamed');
-  });
-
-  it('removes the metadata row when the Note title is removed', async () => {
-    enable();
-    const node = card(`<h1>Title</h1>${note('n1', 'P01 | First')}`);
-    await flush();
-    expect(node.querySelector('.cmside-hl-meta')).not.toBeNull();
-    node.querySelector('#n1 .callout-title-inner')!.textContent = '';
-    await flush();
+    outline(node);
+    expect(node.querySelector('.cmside-hl-meta')?.textContent).toBe('AOne');
+    first.querySelector('.callout-title-inner')!.textContent = 'Note';
+    outline(node);
     expect(node.querySelector('.cmside-hl-meta')).toBeNull();
-    expect(node.querySelector('#n1')!.classList.contains('cmside-headline-note')).toBe(true);
+    expect(first.classList.contains('cmside-headline-note')).toBe(true);
   });
 
-  it('leaves standalone image cards alone and cleans up fully on disable', async () => {
-    const noNote = card('<h1>Title</h1><h2 id="sub">Hidden subtitle</h2>');
-    const withNote = card(`<h1>Other title</h1>${note('n1', 'P01 | Check')}`);
-    const imageCard = document.createElement('div');
-    imageCard.className = 'canvas-node';
-    imageCard.innerHTML = '<div class="canvas-node-content media-embed image-embed"><img src="image.png"></div>';
-    document.body.appendChild(imageCard);
-    enable();
-    expect(noNote.querySelector('.cmside-headline-note')).toBeNull();
-    expect(withNote.querySelectorAll('.cmside-headline-note')).toHaveLength(1);
-    expect(display(imageCard.querySelector('img')!)).not.toBe('none');
-    applyHeadlineMode({ ...DEFAULT_SETTINGS, headlineMode: false });
-    expect(document.querySelector('[class*="cmside-headline-"]')).toBeNull();
-    expect(document.querySelector('.cmside-hl-meta')).toBeNull();
-    withNote.querySelector('#n1')!.remove();
-    withNote.querySelector('.markdown-preview-sizer')!.insertAdjacentHTML('beforeend', note('new', 'P03 | New'));
-    await flush();
-    expect(document.querySelector('.cmside-headline-note')).toBeNull();
-    expect(document.querySelector('.cmside-hl-meta')).toBeNull();
-    expect(display(noNote.querySelector('#sub')!)).not.toBe('none');
+  it('does not style non-decorated cards when headline mode is active', () => {
+    const node = card('<h1>Text card</h1><p id="body">Native</p>', '<div class="inline-title">Text title</div>');
+    expect(node.classList.contains('cmside-headline-card')).toBe(false);
+    expect(getComputedStyle(node.querySelector('.inline-title')!).display).not.toBe('none');
+    expect(getComputedStyle(node.querySelector('#body')!).display).not.toBe('none');
+  });
+
+  it('decorates and clears cards belonging to another document', () => {
+    const otherWindow = new Window();
+    const doc = otherWindow.document as unknown as Document;
+    doc.body.innerHTML = '<div class="canvas-node"><div class="markdown-preview-view"><div class="markdown-preview-sizer"><h2>Other window</h2></div></div></div>';
+    const node = doc.querySelector('.canvas-node') as HTMLElement;
+    applyHeadlineMode({ ...DEFAULT_SETTINGS, headlineMode: true }, doc);
+    outline(node);
+    expect(node.querySelector('.cmside-headline-title')?.textContent).toBe('Other window');
+    removeHeadlineMode(doc);
+    expect(node.classList.contains('cmside-headline-card')).toBe(false);
+    void otherWindow.happyDOM.close();
   });
 });
 
-describe('subtitle ellipsis', () => {
-  function box(element: HTMLElement, client: number, scroll: number): void {
-    Object.defineProperty(element, 'clientHeight', { configurable: true, get: () => client });
-    Object.defineProperty(element, 'scrollHeight', { configurable: true, get: () => scroll });
-  }
+describe('narrowed headings', () => {
+  it.each([1, 2, 3, 4, 5, 6])('promotes a selected H%i in a separate native title', level => {
+    const node = card(`${note('sub', 'A | Category')}<p id="body">Hidden</p>`, `<div class="inline-title" data-level="${level}"><h${level}>Selected</h${level}></div>`);
+    narrow(node, 'Selected', level);
+    const title = node.querySelector(`.inline-title h${level}`)!;
+    expect(title.classList.contains('cmside-headline-title')).toBe(true);
+    expect(getComputedStyle(node.querySelector('.mod-header')!).display).not.toBe('none');
+    expect(node.querySelector('.cmside-hl-meta')?.textContent).toBe('ACategory');
+    expect(node.querySelector('#sub')?.classList.contains('cmside-headline-note')).toBe(true);
+    expect(getComputedStyle(node.querySelector('#body')!).display).toBe('none');
+    expect(node.querySelector('.cmside-headline-empty')).toBeNull();
+  });
 
-  it('clamps overflowing subtitle lines without changing the size sliders', () => {
-    const node = card(`<h1>T</h1>${note('n1', 'P01 | Cat', '<p>one</p><p>two</p>')}`);
-    enable();
+  it('uses native plain-text title, stops at the next equal or higher heading, and keeps nested lower levels inside the section', () => {
+    const node = card(`<h3>Child</h3>${note('within', 'A | Within')}<h2>Next section</h2>${note('after', 'B | After')}`, '<div class="inline-title" data-level="2">Selected</div>');
+    narrow(node);
+    expect(node.querySelector('.inline-title')?.classList.contains('cmside-headline-title')).toBe(true);
+    expect(node.querySelector('.cmside-hl-meta')?.textContent).toBe('AWithin');
+    expect(node.querySelector('#after')?.classList.contains('cmside-headline-note')).toBe(false);
+    const other = card(`<h2>Next</h2>${note('late', 'Late')}`, '<div class="inline-title">Selected</div>');
+    narrow(other);
+    expect(other.querySelector('.cmside-headline-note')).toBeNull();
+  });
+
+  it('creates a fallback title only when the native title is absent and removes it when it appears', () => {
+    const node = card(note('sub', 'Category'));
+    narrow(node, 'Selected H4', 4);
+    expect(node.querySelector('.cmside-headline-synthetic')?.textContent).toBe('Selected H4');
+    const header = node.querySelector('.mod-header')!;
+    header.innerHTML = '<div class="inline-title"><h4>Selected H4</h4></div>';
+    narrow(node, 'Selected H4', 4);
+    expect(node.querySelector('.cmside-headline-synthetic')).toBeNull();
+    expect(node.querySelectorAll('.cmside-headline-title')).toHaveLength(1);
+  });
+
+  it('leaves unresolved heading targets native', () => {
+    const node = card('<p>Native content</p>');
+    refreshHeadlineCard(node, { kind: 'heading' });
+    expect(node.classList.contains('cmside-headline-card')).toBe(false);
+    expect(node.querySelector('.cmside-headline-empty')).toBeNull();
+  });
+});
+
+describe('cleanup and clipping', () => {
+  it('restores native block presentation and previous order through repeated transitions', () => {
+    const node = card(`<h1 style="order: 12">Title</h1><h2>Sub</h2>${note('n1', 'A | One')}`);
+    outline(node);
+    const title = node.querySelector('h1') as HTMLElement;
+    expect(title.style.order).not.toBe('12');
+    refreshHeadlineCard(node, { kind: 'native' });
+    expect(title.style.order).toBe('12');
+    expect(node.querySelector('.cmside-hl-meta')).toBeNull();
+    expect(node.querySelector('[class*="cmside-headline-"]')).toBeNull();
+    expect(node.classList.contains('cmside-headline-card')).toBe(false);
+    expect(getComputedStyle(node.querySelector('#n1 .callout-title')!).display).not.toBe('none');
+    outline(node);
+    clearHeadlineCard(node);
+    expect(title.style.order).toBe('12');
+  });
+
+  it('releases removed preview roots and metadata on a refresh', () => {
+    const node = card(`<h1>First</h1>${note('first', 'A | First')}`);
+    outline(node);
+    const oldRoot = node.querySelector('.markdown-preview-view')!;
+    oldRoot.outerHTML = '<div class="markdown-preview-view"><div class="markdown-preview-sizer"><h2>New</h2></div></div>';
+    outline(node);
+    expect(node.querySelector('.cmside-headline-title')?.textContent).toBe('New');
+    expect(oldRoot.querySelector('.cmside-hl-meta')).toBeNull();
+    expect(oldRoot.querySelector('.cmside-headline-title')).toBeNull();
+  });
+
+  it('clamps an overflowing compact subtitle and cleans its markers', () => {
+    const node = card(note('n1', 'A | One'), '<div class="inline-title">Selected</div>');
+    narrow(node);
     const subtitle = node.querySelector('#n1') as HTMLElement;
-    box(subtitle, 40, 120);
+    Object.defineProperty(subtitle, 'clientHeight', { configurable: true, get: () => 40 });
+    Object.defineProperty(subtitle, 'scrollHeight', { configurable: true, get: () => 120 });
     vi.spyOn(window, 'getComputedStyle').mockReturnValue({ lineHeight: '20px' } as CSSStyleDeclaration);
     syncSubtitleEllipsis(subtitle);
     expect(subtitle.style.getPropertyValue('--cmside-subtitle-lines')).toBe('2');
-    expect(subtitle.classList.contains('cmside-headline-subtitle-clipped')).toBe(false);
-    expect(document.body.style.getPropertyValue('--cmside-subtitle-size')).toBe(String(DEFAULT_SETTINGS.headlineSubtitleSize));
-  });
-
-  it('leaves a subtitle that fits unclamped', () => {
-    const node = card(`<h1>T</h1>${note('n1', 'P01 | Cat')}`);
-    enable();
-    const subtitle = node.querySelector('#n1') as HTMLElement;
-    box(subtitle, 80, 40);
-    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ lineHeight: '20px' } as CSSStyleDeclaration);
-    syncSubtitleEllipsis(subtitle);
+    clearHeadlineCard(node);
     expect(subtitle.style.getPropertyValue('--cmside-subtitle-lines')).toBe('');
-    expect(subtitle.classList.contains('cmside-headline-subtitle-clipped')).toBe(false);
   });
 
-  it('uses an overlay ellipsis when the card frame cuts the subtitle', () => {
-    const node = card(`<h1>T</h1>${note('n1', 'P01 | Cat', '<p>long</p>')}`);
-    enable();
+  it('marks the preview when the card frame clips a compact subtitle', () => {
+    const node = card(note('n1', 'A | One'), '<div class="inline-title">Selected</div>');
+    narrow(node);
     const subtitle = node.querySelector('#n1') as HTMLElement;
     const root = node.querySelector('.cmside-headline-root') as HTMLElement;
-    box(subtitle, 80, 80);
     subtitle.getBoundingClientRect = () => ({ top: 0, bottom: 200, height: 200, left: 0, right: 100, width: 100, x: 0, y: 0, toJSON: () => ({}) });
     node.getBoundingClientRect = () => ({ top: 0, bottom: 100, height: 100, left: 0, right: 100, width: 100, x: 0, y: 0, toJSON: () => ({}) });
     syncSubtitleEllipsis(subtitle);
     expect(root.classList.contains('cmside-headline-subtitle-clipped')).toBe(true);
-    expect(subtitle.classList.contains('cmside-headline-subtitle-clipped')).toBe(false);
+    clearHeadlineCard(node);
+    expect(root.classList.contains('cmside-headline-subtitle-clipped')).toBe(false);
   });
 
-  it('clears the ellipsis when headline mode is removed', () => {
-    const node = card(`<h1>T</h1>${note('n1', 'P01 | Cat')}`);
-    enable();
-    const subtitle = node.querySelector('#n1') as HTMLElement;
-    box(subtitle, 40, 120);
-    vi.spyOn(window, 'getComputedStyle').mockReturnValue({ lineHeight: '20px' } as CSSStyleDeclaration);
-    syncSubtitleEllipsis(subtitle);
-    removeHeadlineMode();
-    expect(subtitle.style.getPropertyValue('--cmside-subtitle-lines')).toBe('');
-    expect(document.querySelector('.cmside-headline-subtitle-clipped')).toBeNull();
-  });
-});
-
-describe('headline mode styles', () => {
-  it('ships the dashboard card styling scoped to headline mode', () => {
-    // Every headline rule is scoped to body.cmside-headline-mode.
-    const headlineRules = styles.split('}').filter(rule => rule.includes('cmside-headline') || rule.includes('cmside-hl-'));
-    for (const rule of headlineRules) {
-      expect(rule).toContain('body.cmside-headline-mode');
-    }
-    // Metadata row: blue rounded badge + muted category.
-    expect(styles).toContain('.cmside-hl-badge');
-    expect(styles).toMatch(/\.cmside-hl-badge \{[^}]*var\(--interactive-accent\)/);
-    expect(styles).toMatch(/\.cmside-hl-badge \{[^}]*border-radius: 999px/);
-    expect(styles).toMatch(/\.cmside-hl-category \{[^}]*var\(--text-muted\)/);
-    // Headline: accent bar, bold, left aligned, clamped for long text.
-    expect(styles).toMatch(/\.cmside-headline-title::before \{[^}]*var\(--interactive-accent\)/);
-    expect(styles).toMatch(/\.cmside-headline-title \{[^}]*font-weight: 700/);
-    expect(styles).toMatch(/\.cmside-headline-title \{[^}]*text-align: left/);
-    expect(styles).toMatch(/\.cmside-headline-title \{[^}]*-webkit-line-clamp/);
-    // Subtitle: muted, no callout chrome, multiline with a height cap.
-    expect(styles).toMatch(/\.cmside-headline-note \{[^}]*background: transparent/);
-    expect(styles).toMatch(/\.cmside-headline-note \{[^}]*color: var\(--text-muted\)/);
-    expect(styles).toMatch(/\.cmside-headline-note \{[^}]*max-height: min\(40cqh/);
-    // Long content is clipped inside the card instead of painting outside it.
-    expect(styles).toMatch(/\.cmside-headline-root, [^{]*\{[^}]*overflow: hidden/);
-    expect(styles).toMatch(/\.cmside-headline-note \{[^}]*overflow: hidden/);
-    expect(styles).toContain('-webkit-line-clamp: var(--cmside-subtitle-lines, 99)');
-    expect(styles).toMatch(/cmside-headline-subtitle-clipped::after \{[^}]*content: "…"/);
-    expect(styles).toMatch(/\.cmside-hl-meta \{[^}]*gap: 1\.15em/);
-    expect(styles).toMatch(/\.cmside-headline-note \{[^}]*margin: clamp\(4px, 1cqmin, 12px\) 0 0/);
-    expect(styles).toMatch(/\.cmside-headline-root \{[^}]*padding: clamp\(8px, 1\.4cqmin, 14px\) 4\.5%/);
-    expect(styles).toContain('.cmside-headline-note > .callout-title');
-    // Card surface + zoom-safe sizing (container queries) are preserved.
-    expect(styles).toMatch(/\.cmside-headline-root \{[^}]*var\(--background-secondary\)/);
-    expect(styles).toContain('container-type: size');
-    expect(styles).toContain('.canvas-node-placeholder');
-    // Each tier reads its own independent size variable on a shared scale.
-    expect(styles).toMatch(/\.cmside-headline-note \{[^}]*--cmside-subtitle-size[^}]*0\.6cqmin/);
-    expect(styles).toMatch(/\.cmside-hl-badge \{[^}]*--cmside-badge-size[^}]*0\.6cqmin/);
-    expect(styles).toMatch(/\.cmside-hl-category \{[^}]*--cmside-category-size[^}]*0\.6cqmin/);
-    expect(styles).not.toContain('--cmside-note-size');
+  it('clamps configurable sizes and removes decorations on mode disable', () => {
+    const node = card('<h1>Title</h1>');
+    outline(node);
+    expect(clampHeadlineSize(Number.NaN, 22, 5, 60)).toBe(22);
+    expect(clampHeadlineSize(100, 22, 5, 60)).toBe(60);
+    applyHeadlineMode({ ...DEFAULT_SETTINGS, headlineMode: false });
+    expect(node.classList.contains('cmside-headline-card')).toBe(false);
+    expect(document.body.classList.contains('cmside-headline-mode')).toBe(false);
   });
 });

@@ -25,7 +25,6 @@ export class CanvasMdSideEditorSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'Canvas MD Side Editor' });
 
     new Setting(containerEl)
       .setName('Dock position')
@@ -135,7 +134,7 @@ export class CanvasMdSideEditorSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Headline mode')
-      .setDesc('Render every Canvas card as a compact dashboard card: the first H1 becomes the main headline, and the first [!note] callout below it provides an optional "ID | Category" metadata row and the subtitle. Full content stays accessible through inline editing or the side editor. Turn off here to restore normal cards.')
+      .setDesc('Show headings on Markdown note cards and edit them in the side panel. Entire files show H1–H6 with H1 metadata; narrowed headings use the selected heading at any level. Narrowed blocks keep their normal display. Text cards are unchanged.')
       .addToggle((tg) => {
         tg.setValue(!!this.plugin.settings.headlineMode);
         tg.onChange(async (val) => {
@@ -146,7 +145,7 @@ export class CanvasMdSideEditorSettingTab extends PluginSettingTab {
         });
       });
 
-    addHeadlineSizeSlider('Headline title size', 'Size of the main headline (the first H1), relative to the card\'s shorter side. Default 25 is the middle of the range.', 'headlineH1Size');
+    addHeadlineSizeSlider('Headline title size', 'Size of H1 and selected headlines (lower outline levels scale down), relative to the card\'s shorter side. Default 25 is the middle of the range.', 'headlineH1Size');
     addHeadlineSizeSlider('Headline badge size', 'Size of the identifier badge (e.g. P01) on the same scale as the headline. Default 16 is the middle of the range.', 'headlineBadgeSize');
     addHeadlineSizeSlider('Headline category size', 'Size of the category label next to the badge, on the same scale as the headline. Default 18 is the middle of the range.', 'headlineCategorySize');
     addHeadlineSizeSlider('Headline subtitle size', 'Size of the subtitle (the [!note] callout body), on the same scale as the headline. Default 11 is the middle of the range.', 'headlineSubtitleSize');

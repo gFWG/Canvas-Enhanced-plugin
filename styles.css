@@ -148,35 +148,27 @@ If your plugin does not need CSS, delete this file.
   background: var(--background-modifier-hover);
 }
 
-/* Headline mode: Markdown-driven dashboard card.
-   Row 1: optional identifier badge + category (parsed from the Note title).
-   Row 2: the first H1 as the main headline with a blue accent bar.
-   Row 3: the Note body as a muted multiline subtitle (callout chrome removed).
-   The feature marks the selected blocks and all their descendants with
-   `cmside-headline-keep` and their ancestors with `cmside-headline-path`;
-   everything else inside the card is hidden. Selector lists stay on one
-   line and `:not()` takes a single class, because some CSS engines parse
-   multi-line selector lists and complex `:not()` arguments unreliably.
-   Every rule excludes inline editing, so the full content and the theme's
-   own callout layout stay intact while editing. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-root :not(.cmside-headline-keep):not(.cmside-headline-path) {
+/* Only explicitly decorated Markdown file cards receive headline styles.
+   The renderer marks retained content and its ancestors; other content in
+   the preview stays hidden without modifying the Markdown. */
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-root :not(.cmside-headline-keep):not(.cmside-headline-path) {
   display: none !important;
 }
 
 /* Hide duplicate in-card filenames/properties, not the Canvas node label or
    the headers of embeds inside the selected Note (its descendants carry
    `cmside-headline-keep`). */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .mod-header:not(.cmside-headline-keep), body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .inline-title:not(.cmside-headline-keep), body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .metadata-container:not(.cmside-headline-keep), body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .markdown-embed-title:not(.cmside-headline-keep), body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .file-embed-title:not(.cmside-headline-keep), body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .embed-title:not(.cmside-headline-keep), body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .markdown-embed-link:not(.cmside-headline-keep) {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .mod-header:not(.cmside-headline-keep):not(.cmside-headline-path), .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .inline-title:not(.cmside-headline-keep):not(.cmside-headline-path), .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .metadata-container:not(.cmside-headline-keep):not(.cmside-headline-path), .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .markdown-embed-title:not(.cmside-headline-keep):not(.cmside-headline-path), .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .file-embed-title:not(.cmside-headline-keep):not(.cmside-headline-path), .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .embed-title:not(.cmside-headline-keep):not(.cmside-headline-path), .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .markdown-embed-link:not(.cmside-headline-keep):not(.cmside-headline-path) {
   display: none !important;
 }
 
 /* The node has explicit Canvas dimensions, making it a safe size container.
    The shorter side controls title size even when Canvas zoom transforms it. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) {
   container-type: size;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-root, body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-path.markdown-preview-sizer {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-root, .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-path.markdown-preview-sizer {
   display: flex !important;
   flex-direction: column !important;
   align-items: flex-start !important;
@@ -194,11 +186,11 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-he
 /* Dashboard card surface: dark charcoal/slate in dark themes via Obsidian's
    own variables, a light panel in light themes. Padding lives only on this
    outer layer (the inner sizer stays at 0) so it never applies twice. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .canvas-node-content {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .canvas-node-content {
   padding: 0 !important;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-root {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-root {
   position: relative;
   padding: clamp(8px, 1.4cqmin, 14px) 4.5% !important;
   background: var(--background-secondary);
@@ -210,7 +202,7 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-he
 /* Metadata row: blue rounded identifier badge + muted blue-gray category.
    Badge and category sizes are independent settings on the headline scale
    (value × 0.6cqmin of the card's shorter side). */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-hl-meta {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-hl-meta {
   display: flex !important;
   align-items: center !important;
   flex-wrap: wrap;
@@ -221,7 +213,7 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-hl
   line-height: 1.25;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-hl-badge {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-hl-badge {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   border-radius: 999px;
@@ -232,7 +224,7 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-hl
   white-space: nowrap;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-hl-category {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-hl-category {
   color: var(--text-muted);
   font-size: calc(var(--cmside-category-size, 18) * 0.6cqmin) !important;
   font-weight: 500;
@@ -241,11 +233,11 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-hl
 
 /* Flatten per-block rendering sections, but not the selected Note itself
    (it is never marked as a path) or any part of its content. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-path:not(.markdown-preview-sizer) {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-root .cmside-headline-path:not(.markdown-preview-sizer) {
   display: contents !important;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-title {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-title {
   position: relative !important;
   font-size: calc(var(--cmside-h1-size, 25) * 0.6cqmin) !important;
   font-weight: 700 !important;
@@ -266,7 +258,7 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-he
 }
 
 /* Short vertical blue accent bar immediately to the left of the headline. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-title::before {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-title::before {
   content: "";
   position: absolute;
   left: 0;
@@ -279,7 +271,7 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-he
 
 /* Reserve space for the subtitle even when the headline is unusually long.
    Title (40) + note (40) + meta row + gaps stay within the card height. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-has-note .cmside-headline-title {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-has-note .cmside-headline-title {
   max-height: 40cqh;
 }
 
@@ -287,7 +279,7 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-he
    background, border) is removed and its body renders as muted gray text.
    Font size is an independent setting on the headline scale.
    Nested callouts inside the body keep the theme's native UI. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-note {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-note {
   width: 100%;
   max-width: 100%;
   min-height: 0;
@@ -310,11 +302,11 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-he
   --cmside-subtitle-lines: 99;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-note > .callout-title {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-note > .callout-title {
   display: none !important;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-note .callout-content {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-note .callout-content {
   padding: 0;
   margin: 0;
   color: var(--text-muted);
@@ -326,18 +318,18 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-he
 
 /* Join note paragraphs into one subtitle so the ellipsis lands in the text
    instead of after a block. Nested callouts keep their own layout. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-note .callout-content > p {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-note .callout-content > p {
   display: inline;
   margin: 0;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-note .callout-content > p + p::before {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-note .callout-content > p + p::before {
   content: " ";
 }
 
 /* Fallback ellipsis when line-clamp cannot run, or when the card frame — not
    the note box — is what cuts the text. Sizes stay at the slider values. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-note.cmside-headline-subtitle-clipped::after, body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-root.cmside-headline-subtitle-clipped::after {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-note.cmside-headline-subtitle-clipped::after, .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-root.cmside-headline-subtitle-clipped::after {
   content: "…";
   position: absolute;
   right: 0;
@@ -350,12 +342,12 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-he
   pointer-events: none;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-note * {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-note * {
   font-size: inherit !important;
 }
 
 /* Obsidian replaces rendered Markdown with a filename at deep zoom-out. */
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .canvas-node-placeholder {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .canvas-node-placeholder {
   font-size: calc(var(--cmside-h1-size, 25) * 0.6cqmin) !important;
   font-weight: 700 !important;
   line-height: 1.25 !important;
@@ -364,12 +356,77 @@ body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .canvas-no
   text-wrap: balance !important;
 }
 
-body.cmside-headline-mode .canvas-node:not(.is-editing):not(.editing) .cmside-headline-empty::before {
+.canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-empty::before {
   content: "No headline";
   color: var(--text-faint);
   font-style: italic;
   font-size: clamp(12px, calc(var(--cmside-h1-size, 25) * 0.3cqmin), 80px);
   opacity: 0.7;
+}
+
+/* Keep Obsidian's preview as the only scroll surface. Like native Canvas,
+   it scrolls only while the node is focused; otherwise wheel gestures pan. */
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .cmside-headline-root {
+  display: block !important;
+  overflow-x: hidden !important;
+  overflow-y: hidden !important;
+}
+.canvas-node.cmside-headline-card.cmside-headline-outline.is-focused:not(.is-editing):not(.editing) .cmside-headline-root {
+  overflow-y: auto !important;
+}
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .cmside-headline-path.markdown-preview-sizer {
+  height: auto !important;
+  min-height: 100% !important;
+  flex: 0 0 auto;
+  justify-content: flex-start !important;
+  align-items: stretch !important;
+  gap: 0 !important;
+  overflow: visible !important;
+}
+/* Native sections must keep a box: Obsidian measures their offset and size. */
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .markdown-preview-sizer > .cmside-headline-path {
+  display: block !important;
+}
+/* Hidden sections still have boxes for Obsidian, but no margins, padding or
+   flex gap may accumulate before the first visible heading. */
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .markdown-preview-sizer > .cmside-headline-path:not(.cmside-headline-section) {
+  flex: 0 0 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .markdown-preview-sizer > .cmside-headline-section {
+  flex: 0 0 auto !important;
+  margin-bottom: clamp(6px, 1.6cqmin, 16px) !important;
+}
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .cmside-hl-meta {
+  margin-bottom: clamp(6px, 1.6cqmin, 16px) !important;
+}
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .cmside-headline-title {
+  display: block !important;
+  flex: none;
+  max-height: none;
+  overflow: visible !important;
+  -webkit-line-clamp: unset !important;
+}
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h2.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.50cqmin) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h3.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.44cqmin) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h4.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.40cqmin) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h5.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.36cqmin) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h6.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.32cqmin) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) :is(h2, h3, h4, h5, h6).cmside-headline-title::before { display: none; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .cmside-headline-note {
+  flex: none;
+  max-height: none;
+  overflow: visible;
+}
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .cmside-headline-note .callout-content {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
 }
 
 /* Image cards always fill their frame (issue #21 follow-up). Obsidian's

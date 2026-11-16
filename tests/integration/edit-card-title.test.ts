@@ -132,6 +132,7 @@ describe('issue #10 — text card title', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const view = makeCanvasView(container);
+    view.canvas!.getData = () => ({ nodes: [{ id: 'n1', type: 'text', text: '## Heading\nbody' }], edges: [] });
     // Mark the canvas view's file so writeNodeContent can use the JSON fallback.
     const canvasFile = new (TFile as any)('board.canvas') as TFile;
     (app.vault as any).__seed('board.canvas', JSON.stringify({
@@ -165,6 +166,7 @@ describe('issue #10 — text card title', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const view = makeCanvasView(container);
+    view.canvas!.getData = () => ({ nodes: [{ id: 'n1', type: 'text', text: 'first line\nsecond' }], edges: [] });
     const canvasFile = new (TFile as any)('board.canvas') as TFile;
     (app.vault as any).__seed('board.canvas', JSON.stringify({
       nodes: [{ id: 'n1', type: 'text', text: 'first line\nsecond' }],

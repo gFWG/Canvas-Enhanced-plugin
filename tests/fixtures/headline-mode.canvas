@@ -1,0 +1,52 @@
+{
+  "nodes": [
+    {
+      "id": "entire",
+      "type": "file",
+      "file": "Canvas-Enhanced-plugin/tests/fixtures/headline-mode.md",
+      "x": 0,
+      "y": 0,
+      "width": 550,
+      "height": 650
+    },
+    {
+      "id": "selected",
+      "type": "file",
+      "file": "Canvas-Enhanced-plugin/tests/fixtures/headline-mode.md",
+      "x": 600,
+      "y": 0,
+      "width": 550,
+      "height": 650,
+      "subpath": "#Selected section 中文"
+    },
+    {
+      "id": "block",
+      "type": "file",
+      "file": "Canvas-Enhanced-plugin/tests/fixtures/headline-mode.md",
+      "x": 1200,
+      "y": 0,
+      "width": 550,
+      "height": 650,
+      "subpath": "#^headline-block"
+    },
+    {
+      "id": "text",
+      "type": "text",
+      "text": "# Native text card\n\nThis body stays visible and editable.",
+      "x": 0,
+      "y": 750,
+      "width": 550,
+      "height": 220
+    },
+    {
+      "id": "image",
+      "type": "file",
+      "file": "Canvas-Enhanced-plugin/tests/fixtures/headline-icon.svg",
+      "x": 600,
+      "y": 750,
+      "width": 300,
+      "height": 220
+    }
+  ],
+  "edges": []
+}
