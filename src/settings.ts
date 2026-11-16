@@ -20,9 +20,8 @@ export interface CanvasMdSideEditorSettings {
   floatingY?: number;
   floatingWidth?: number;
   floatingHeight?: number;
-  // Vault-wide "headline mode" toggle (issue #13). When true, every text /
-  // file canvas card shows its first H1 and first Note callout; full content
-  // remains accessible through the side editor.
+  // Markdown file cards show a heading outline or their selected headline.
+  // Block targets keep native presentation; affected notes edit in the panel.
   headlineMode?: boolean;
   // Title size in headline mode, scaling with the card's shorter side
   // (multiplier on CSS `cqmin`, so both card axes are respected). Bigger

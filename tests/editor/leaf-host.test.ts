@@ -10,6 +10,7 @@ vi.mock('obsidian', async () => {
     containerEl: HTMLElement = document.createElement('div');
     contentEl: HTMLElement = document.createElement('div');
     editor = { focus: vi.fn() };
+    save = vi.fn(async () => {});
     private data = '';
     constructor() {
       this.containerEl.classList.add('view-container-fake');
@@ -149,5 +150,43 @@ describe('MarkdownLeafHost — idle state', () => {
     await expect(host.detach()).resolves.toBeUndefined();
     expect(host.hasOpen()).toBe(false);
     expect(host.getValue()).toBeNull();
+  });
+});
+
+describe('MarkdownLeafHost cancellation', () => {
+  it('does not remount an editor after teardown during a pending open', async () => {
+    const { WorkspaceLeaf } = await import('obsidian');
+    const original = WorkspaceLeaf.prototype.setViewState;
+    let resume!: () => void;
+    const pending = new Promise<void>(resolve => { resume = resolve; });
+    vi.spyOn(WorkspaceLeaf.prototype, 'setViewState').mockImplementationOnce(async function(state) {
+      await pending;
+      return original.call(this, state);
+    });
+    const host = new MarkdownLeafHost(new App());
+    const mount = document.createElement('div');
+    document.body.append(mount);
+    const opening = host.open(makeFile(), mount);
+    await host.detach();
+    resume();
+    expect(await opening).toBeNull();
+    expect(mount.children).toHaveLength(0);
+    expect(host.hasOpen()).toBe(false);
+  });
+
+  it('does not detach a newer editor when an older open fails late', async () => {
+    const { WorkspaceLeaf } = await import('obsidian');
+    let reject!: (error: Error) => void;
+    vi.spyOn(WorkspaceLeaf.prototype, 'setViewState').mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    const host = new MarkdownLeafHost(new App());
+    const mount = document.createElement('div');
+    document.body.append(mount);
+    const old = host.open(makeFile('old.md'), mount);
+    const current = await host.open(makeFile('new.md'), mount);
+    reject(new Error('old open failed'));
+    expect(await old).toBeNull();
+    expect(host.getView()).toBe(current);
+    expect(host.getValue()).toContain('new.md');
+    await host.detach();
   });
 });

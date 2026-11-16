@@ -95,6 +95,23 @@ On 2026-11-16, this Apple Silicon Mac used fnm 1.39.0, Node.js 24.22.0, and npm 
 
 The initial lockfile could not be installed with `npm ci`: it lacked ESLint peer dependencies and declared Node 16 types incompatible with Vitest. ESLint 8.57.1 is now an explicit development dependency, Node types match Node 24, and TypeScript is 5.9.3. The package files use LF line endings.
 
-Verified: `npm ci`, all 222 tests in 20 test files, `npm run build`, and watcher startup with `npm run dev`. The watcher was stopped after verification; start it in your terminal when developing. Plugin enabling and interactive Canvas behavior still require manual verification in Obsidian.
+The setup was verified with `npm ci`, the test suite, `npm run build`, and watcher startup with `npm run dev`. Start the watcher in your terminal when developing.
 
-The inherited tests print Happy DOM computed-style errors and an Obsidian `WorkspaceLeaf` mock fallback warning despite passing. The dependency audit reports 15 affected packages (4 moderate, 7 high, 4 critical), including the older Vitest, Happy DOM, and esbuild toolchain. Resolving all findings requires additional dependency upgrades; this setup retains those existing versions. Recheck with `npm audit` as advisories change.
+The security review refreshed the locked test/build dependencies to Vitest and coverage 5.1.0, Happy DOM 21.0.4, esbuild 0.28.2, and Obsidian API types 1.14.4. `builtin-modules` was replaced with Node's built-in `node:module` export. The test configuration is now `vitest.config.mts`. Node 24 remains pinned in `.node-version`.
+
+`npm ci --ignore-scripts`, the test suite, and `npm run build` pass with this lockfile. The local platform's esbuild binary is supplied as an optional npm dependency; no install script was needed here. `npm audit` reports zero known advisories as of 2026-11-16. Recheck after dependency changes. See [REVIEW.md](REVIEW.md) for details and verification limits.
+
+## Headline mode smoke test
+
+Open `tests/fixtures/headline-mode.canvas` from this checkout in the development vault. Its links use the current vault-relative checkout path, `Canvas-Enhanced-plugin/`; update those paths if the checkout is moved.
+
+1. Run `npm run dev` and reload the plugin. Open the fixture in two Canvas panes.
+2. Enable headline mode. The entire-file card should show H1–H6, with metadata/subtitles grouped with their H1. Select it and scroll to reach the later headings.
+3. The heading card should show **Selected section 中文**, with its own metadata. Use the native heading picker to try H1–H6, including the formatted heading.
+4. The block card should retain its native paragraph. Try narrowing to the list and callout blocks, then choose **Show entire file**.
+5. Single-click a note and a text card to select them without opening an editor. Double-click a note to open the whole file in the side panel; double-click a text card to edit it inline. Repeat with headline mode off. Try context-menu Edit, toolbar Edit, and keyboard editing on note cards, including block targets. The image remains outside headline styling.
+6. Edit and switch cards/panes, close the panel, and toggle headline mode. Confirm autosave and panel focus cleanup. Check small cards, links, light/dark themes, and plugin disable/re-enable.
+
+On Obsidian desktop 1.15.1, interactive checks covered note and text selection and editing in both modes, real edits and saves, note double-click and native menu and toolbar Edit, H1–H6 heading targets, the native narrowing menus, block presentation, small cards, and light and dark themes. A fresh long-note card rendered all 84 headings and retained all 169 native preview sections; scrolling reached the last heading, stayed inside the selected card, and panned the Canvas over an unselected card. A cross-pane edit request saved the previous note and opened the next note in the side panel. Disabling the plugin removed its decorations and panel and restored native methods; re-enabling it restored the outline. Return did not trigger a native edit in this runtime, so a keyboard edit path was not verified. Link and zoom gestures were not separately verified.
+
+The earlier interactive pass used the implementation before the security review. The reviewed implementation passes 282 tests in 25 files and `npm run build`; a fresh interactive pass stopped after plugin reload because desktop automation timed out. Do not count the earlier live pass as verification of the new lifecycle changes. Automated regressions cover rendering, edit interception, narrowing transitions, delayed saves, failures, and cleanup. Do not treat these checks as proof of compatibility with every Obsidian version.

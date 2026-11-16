@@ -1,6 +1,6 @@
 // CanvasInteraction — everything about being attached to a Canvas view:
 //   - wiring pointer/focus/keyboard listeners onto the canvas DOM
-//   - single-click detection (vs. drag / long-press) to open cards
+//   - single-click selection and double-click/native editing coordination
 //   - patching Canvas's zoomToSelection so the panel saves & closes first
 //   - closing the panel when Canvas's own inline editor takes focus
 //
@@ -11,24 +11,21 @@
 // Unlike the previous implementation, listeners are registered and removed
 // by this class itself (not via the plugin's registerDomEvent), so repeated
 // attach() calls on the same view no longer accumulate duplicate handlers.
-import type { App } from 'obsidian';
+import { Notice, type App } from 'obsidian';
 import type { WorkspaceLeaf } from 'obsidian';
 import type { CanvasNode, CanvasLikeView, CanvasLike } from '../types';
-import { findNodeIdAtPoint, getSelectedCanvasNodeId, hitTestNodeAt, tryCanvasAPIsForHit } from './hit-test';
-import { getCanvasNodeById } from './data';
+import { findNodeIdAtPoint, hitTestNodeAt } from './hit-test';
 
 const MOVE_TOLERANCE_PX = 6; // distance threshold to treat as drag
 const LONG_PRESS_MS = 350;   // duration threshold to treat as long-press
-
-// TEMP debug tracing for the blank-click-won't-close issue. Remove once fixed.
-function dbg(...args: unknown[]): void {
-  try { console.debug('[cmside]', ...args); } catch {}
-}
 
 export interface InteractionDelegate {
   getPanelEl(): HTMLElement | null;
   // Id of the node currently open in the side panel (null when closed).
   getOpenNodeId(): string | null;
+  // Headline mode leaves excluded cards' native editor gestures intact.
+  allowNativeEditing?(view: CanvasLikeView, target: HTMLElement): boolean;
+  requestMarkdownEdit?(view: CanvasLikeView, target: HTMLElement): boolean;
   save(view: CanvasLikeView): Promise<void>;
   saveAndClose(view: CanvasLikeView): Promise<void>;
   openNode(view: CanvasLikeView, node: CanvasNode): Promise<void>;
@@ -58,8 +55,6 @@ export class CanvasInteraction {
   private detachFns: Array<() => void> = [];
 
   // Zoom-to-selection integration
-  private canvasPatchedRef: CanvasLike | null = null;
-  private originalZoomToSelection: ((...args: unknown[]) => unknown) | null = null;
   private zoomingToSelection: boolean = false;
 
   // Single-click detection state
@@ -67,17 +62,11 @@ export class CanvasInteraction {
   private pointerDownX: number = 0;
   private pointerDownY: number = 0;
   private pointerDragging: boolean = false;
-  private pendingNodeId: string | null = null;
   // Listeners sit on several nested elements (container / contentEl /
   // wrapper), so one physical event bubbles through multiple registrations.
   // Dedupe by event object identity so each gesture is handled once.
   private lastPointerDownEvent: PointerEvent | null = null;
   private lastPointerUpEvent: PointerEvent | null = null;
-  // True when pendingNodeId came from the post-pointerdown selection
-  // re-check rather than a direct DOM/geometric hit. Selection-sourced ids
-  // can be stale (the previously open card may still be selected during a
-  // background click), so pointerup must not trust them as a click target.
-  private pendingNodeIdFromSelection: boolean = false;
 
   constructor(app: App, delegate: InteractionDelegate) {
     this.app = app;
@@ -103,48 +92,50 @@ export class CanvasInteraction {
     for (const c of canvasEls) {
       if (!targets.includes(c)) targets.push(c);
     }
-    try {
-      const canvasObj: CanvasLike | undefined = view?.canvas as CanvasLike | undefined;
-      if (canvasObj) {
-        // Patch zoomToSelection to close side editor and mark zooming state
+    const canvasObj: CanvasLike | undefined = view.canvas as CanvasLike | undefined;
+    const originalZoom = canvasObj?.zoomToSelection;
+    if (canvasObj && typeof originalZoom === 'function') {
+      const previous = Object.getOwnPropertyDescriptor(canvasObj, 'zoomToSelection');
+      const timerWindow = container.ownerDocument.defaultView ?? window;
+      let active = true;
+      let zoomTimer: number | null = null;
+      const interaction = this;
+      const wrapper = async function(...args: unknown[]) {
+        if (!active) return Reflect.apply(originalZoom, canvasObj, args);
+        interaction.zoomingToSelection = true;
         try {
-          const z = canvasObj.zoomToSelection;
-          if (typeof z === 'function' && this.canvasPatchedRef !== canvasObj) {
-            this.originalZoomToSelection = z.bind(canvasObj);
-            const self = this;
-            canvasObj.zoomToSelection = async function(...args: unknown[]) {
-              try { self.zoomingToSelection = true; } catch {}
-              try {
-                if (self.panelEl) await self.delegate.saveAndClose(view);
-              } catch {}
-              try {
-                return await self.originalZoomToSelection?.(...args);
-              } finally {
-                // Keep the guard up for a trailing window: the awaited zoom
-                // resolving doesn't mean the visual zoom has settled, and a
-                // pointerup landing in that window must not open a card.
-                try { setTimeout(() => { self.zoomingToSelection = false; }, 200); } catch {}
-              }
-            };
-            this.canvasPatchedRef = canvasObj;
-            // Ensure restore on detach
-            this.detachFns.push(() => {
-              try {
-                if (this.canvasPatchedRef === canvasObj && this.originalZoomToSelection) {
-                  canvasObj.zoomToSelection = this.originalZoomToSelection;
-                }
-              } catch {}
-              this.canvasPatchedRef = null;
-              this.originalZoomToSelection = null;
-              this.zoomingToSelection = false;
-            });
+          if (interaction.panelEl) await interaction.delegate.saveAndClose(view);
+        } catch (error) {
+          interaction.reportSaveError(error);
+        }
+        try {
+          return await Reflect.apply(originalZoom, canvasObj, args);
+        } finally {
+          if (active) {
+            if (zoomTimer !== null) timerWindow.clearTimeout(zoomTimer);
+            zoomTimer = timerWindow.setTimeout(() => { interaction.zoomingToSelection = false; }, 200);
           }
-        } catch {}
+        }
+      };
+      try {
+        Object.defineProperty(canvasObj, 'zoomToSelection', { value: wrapper, configurable: true, writable: true });
+        this.detachFns.push(() => {
+          active = false;
+          if (zoomTimer !== null) timerWindow.clearTimeout(zoomTimer);
+          if (canvasObj.zoomToSelection === wrapper) {
+            if (previous) Object.defineProperty(canvasObj, 'zoomToSelection', previous);
+            else delete canvasObj.zoomToSelection;
+          }
+          interaction.zoomingToSelection = false;
+        });
+      } catch {
+        // Unsupported Canvas object: leave its native zoom behavior intact.
       }
-    } catch {}
+    }
 
     // Use capture on pointerdown to catch background clicks before Canvas swallows them
     const onPointerDown = async (evt: PointerEvent) => {
+      try {
       if (evt === this.lastPointerDownEvent) return;
       this.lastPointerDownEvent = evt;
       const target = evt.target as HTMLElement | null;
@@ -161,26 +152,17 @@ export class CanvasInteraction {
         '.canvas-node, .canvas-card, [data-node-id], [data-id]'
       ) as HTMLElement | null;
       const domId = cardEl?.getAttribute('data-node-id') || cardEl?.getAttribute('data-id') || null;
-      const idByPoint = findNodeIdAtPoint(evt.clientX, evt.clientY);
+      const idByPoint = findNodeIdAtPoint(evt.clientX, evt.clientY, container.ownerDocument);
       let hitId: string | null = null;
       if (!domId && !idByPoint) {
         try { hitId = await hitTestNodeAt(this.app, view, evt.clientX, evt.clientY); } catch {}
       }
-      this.pendingNodeId = (domId ?? idByPoint ?? hitId) ?? null;
-      this.pendingNodeIdFromSelection = false;
-      // Also re-check selection shortly after pointerdown
-      setTimeout(async () => {
-        const selId = await getSelectedCanvasNodeId(view);
-        if (!this.pendingNodeId && selId) {
-          this.pendingNodeId = selId;
-          this.pendingNodeIdFromSelection = true;
-        }
-      }, 30);
+      const nodeId = domId ?? idByPoint ?? hitId;
       // Only save if panel is open
       if (this.panelEl) {
         // Clicking another card should also save current, but avoid saving if clicking the same card
-        if (this.pendingNodeId) {
-          if (this.currentOpenNodeId() && this.currentOpenNodeId() !== this.pendingNodeId) {
+        if (nodeId) {
+          if (this.currentOpenNodeId() && this.currentOpenNodeId() !== nodeId) {
             await this.delegate.save(view);
           }
         } else {
@@ -189,6 +171,10 @@ export class CanvasInteraction {
         }
       }
       // Don't close here, allow click handler to reopen if it's a card
+      } catch (error) {
+        this.pointerDragging = true;
+        this.reportSaveError(error);
+      }
     };
 
     // Detect dragging by measuring movement beyond a tolerance
@@ -206,20 +192,13 @@ export class CanvasInteraction {
       try {
       if (evt === this.lastPointerUpEvent) return;
       this.lastPointerUpEvent = evt;
-      if (!isCanvasView(view)) { dbg('pointerup: not canvas view'); return; }
+      if (!isCanvasView(view)) return;
       const target = evt.target as HTMLElement | null;
-      if (!target) { dbg('pointerup: no target'); return; }
+      if (!target) return;
       const panel = this.panelEl;
-      dbg('pointerup: enter', {
-        target: `${target.tagName}.${String(target.className).slice(0, 60)}`,
-        panelExists: !!panel,
-        panelOpen: panel ? panel.classList.contains('open') : null,
-        insidePanel: panel ? panel.contains(target) : null,
-      });
       if (panel && panel.contains(target)) return;
       // Do not open editor while zoom-to-selection in progress
       if (this.zoomingToSelection) {
-        this.pendingNodeId = null;
         this.pointerDownTime = 0; this.pointerDragging = false;
         return;
       }
@@ -233,53 +212,16 @@ export class CanvasInteraction {
       const isLongPress = dt >= LONG_PRESS_MS;
 
       const qualifiesSingleClick = isPrimaryButton && !this.pointerDragging && !moved && !isLongPress;
-      dbg('pointerup: qualify', { isPrimaryButton, dt, moved, dragging: this.pointerDragging, isLongPress, qualifiesSingleClick });
 
-      if (qualifiesSingleClick) {
-        // Resolve the clicked node id from physical hit tests only. The
-        // Canvas *selection* is deliberately not consulted here: during a
-        // background click the previously open card can still be selected
-        // for a short window, and trusting it would reopen that card
-        // instead of closing the panel.
-        let clickId: string | null = findNodeIdAtPoint(evt.clientX, evt.clientY);
-        dbg('pointerup: findNodeIdAtPoint ->', clickId);
-        if (!clickId) clickId = await tryCanvasAPIsForHit(view, evt.clientX, evt.clientY);
-        dbg('pointerup: tryCanvasAPIsForHit ->', clickId);
-        if (!clickId) {
-          try { clickId = await hitTestNodeAt(this.app, view, evt.clientX, evt.clientY); } catch (e) { dbg('pointerup: hitTestNodeAt threw', e); }
-        }
-        dbg('pointerup: hitTestNodeAt ->', clickId);
-        // pendingNodeId is only trustworthy when pointerdown hit a node
-        // directly, not when it was filled from the selection re-check.
-        if (!clickId && !this.pendingNodeIdFromSelection) clickId = this.pendingNodeId ?? null;
-        dbg('pointerup: final clickId ->', clickId, { pendingFromSelection: this.pendingNodeIdFromSelection });
-
-        if (clickId) {
-          const node = await getCanvasNodeById(this.app, view, clickId);
-          if (node) {
-            const isMd = node.type === 'text' || (node.type === 'file' && typeof node.file === 'string' && node.file.toLowerCase().endsWith('.md'));
-            if (isMd) {
-              dbg('pointerup: OPENING node', clickId);
-              if (this.panelEl && this.currentOpenNodeId() && this.currentOpenNodeId() !== clickId) {
-                await this.delegate.save(view);
-              }
-              await this.delegate.openNode(view, node);
-              this.pendingNodeId = null;
-              // reset pointer tracking and return
-              this.pointerDownTime = 0; this.pointerDragging = false;
-              return;
-            }
-          }
-        }
-        // Background case: if editor open, save & close
-        dbg('pointerup: BACKGROUND branch, panelEl?', !!this.panelEl);
-        if (this.panelEl) await this.delegate.saveAndClose(view);
-        dbg('pointerup: saveAndClose done, open?', this.panelEl?.classList.contains('open'));
+      // A click selects a Canvas card; editing starts only through the native
+      // double-click, menu, or keyboard edit gesture. Close a previous side
+      // editor after saving rather than opening the clicked card here.
+      if (qualifiesSingleClick && panel?.classList.contains('open')) {
+        await this.delegate.saveAndClose(view);
       }
       // clear states on non-qualifying interactions without acting
-      this.pendingNodeId = null;
       this.pointerDownTime = 0; this.pointerDragging = false;
-      } catch (e) { dbg('pointerup: EXCEPTION', e); }
+      } catch (error) { this.reportSaveError(error); }
     };
 
     // Suppress Canvas default double-click zoom when our panel is active
@@ -291,11 +233,17 @@ export class CanvasInteraction {
         // Allow dblclicks inside panel (e.g., selecting text within editor/preview)
         const panel = this.panelEl;
         if (panel && panel.contains(target)) return;
+        if (evt.button !== 0) return;
+        if (this.delegate.requestMarkdownEdit?.(view, target)) {
+          evt.preventDefault();
+          evt.stopImmediatePropagation();
+          evt.stopPropagation();
+          return;
+        }
+        if (this.delegate.allowNativeEditing?.(view, target)) return;
         // Only suppress when our editor panel is open/active
         const panelOpen = !!panel && panel.classList.contains('open');
         if (!panelOpen) return;
-        // Only act on primary-button double clicks
-        if (evt.button !== 0) return;
         // Prevent Canvas from handling zoom-to-selection or opening native editor
         evt.preventDefault();
         evt.stopImmediatePropagation();
@@ -314,7 +262,7 @@ export class CanvasInteraction {
         if (this.isCanvasInlineEditTarget(target)) {
           if (this.panelEl) await this.delegate.saveAndClose(view);
         }
-      } catch {}
+      } catch (error) { this.reportSaveError(error); }
     };
 
     const onKeyDown = async (evt: KeyboardEvent) => {
@@ -327,7 +275,7 @@ export class CanvasInteraction {
         if (this.isCanvasInlineEditTarget(target)) {
           if (this.panelEl) await this.delegate.saveAndClose(view);
         }
-      } catch {}
+      } catch (error) { this.reportSaveError(error); }
     };
 
     // Use bubbling phase for click so Canvas can update selection first
@@ -347,16 +295,6 @@ export class CanvasInteraction {
       const off = this.detachFns.pop();
       try { off && off(); } catch {}
     }
-    // Safety: if we were patched and not restored, restore now
-    try {
-      const view = getActiveCanvasView(this.app);
-      const canvasObj: CanvasLike | undefined = view?.canvas as CanvasLike | undefined;
-      if (canvasObj && this.canvasPatchedRef === canvasObj && this.originalZoomToSelection) {
-        canvasObj.zoomToSelection = this.originalZoomToSelection;
-      }
-    } catch {}
-    this.canvasPatchedRef = null;
-    this.originalZoomToSelection = null;
     this.zoomingToSelection = false;
   }
 
@@ -371,6 +309,11 @@ export class CanvasInteraction {
     this.detachFns.push(() => {
       try { el.removeEventListener(type, listener, options); } catch {}
     });
+  }
+
+  private reportSaveError(error: unknown): void {
+    console.error('CanvasMdSideEditor: could not save the side editor', error);
+    new Notice('Could not save the note. Your edits remain in the side panel.');
   }
 
   private currentOpenNodeId(): string | null {

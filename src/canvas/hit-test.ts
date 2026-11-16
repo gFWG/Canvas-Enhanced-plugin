@@ -1,95 +1,19 @@
 // Canvas node resolution: given a screen point (or the current selection),
-// figure out which canvas node the user means. Three strategies are tried
-// by callers in order of preference:
-//   1. findNodeIdAtPoint   — DOM hit testing via elementsFromPoint
-//   2. tryCanvasAPIsForHit — version-dependent Canvas runtime hit-test APIs
-//   3. hitTestNodeAt       — geometric test against canvas JSON bounds
-// plus getSelectedCanvasNodeId for selection-based fallback.
+// resolve a node using DOM hit testing or Canvas JSON bounds.
 import type { CanvasLikeView, CanvasLike, CanvasNode } from '../types';
 import type { App } from 'obsidian';
 import { screenToCanvasPoint } from './geometry';
 import { readCanvasData } from './data';
 
-export function findNodeIdAtPoint(clientX: number, clientY: number): string | null {
+export function findNodeIdAtPoint(clientX: number, clientY: number, doc: Document = document): string | null {
   try {
-    const path = (document.elementsFromPoint(clientX, clientY) || []) as HTMLElement[];
+    const path = (doc.elementsFromPoint(clientX, clientY) || []) as HTMLElement[];
     for (const el of path) {
       const host = el.closest('[data-node-id], [data-id], .canvas-node, .canvas-card') as HTMLElement | null;
       if (!host) continue;
       const id = host.getAttribute('data-node-id') || host.getAttribute('data-id');
       if (id) return id;
     }
-  } catch {}
-  return null;
-}
-
-export async function getSelectedCanvasNodeId(view: CanvasLikeView): Promise<string | null> {
-  try {
-    const canvas: CanvasLike | undefined = view?.canvas as CanvasLike | undefined;
-    if (!canvas) return null;
-    // Try getSelection() API if present
-    let sel: unknown = undefined;
-    try {
-      const maybeGetSel = (canvas as { getSelection?: () => unknown }).getSelection;
-      if (typeof maybeGetSel === 'function') {
-        sel = maybeGetSel.call(canvas);
-      }
-    } catch {}
-    // Fallback to property
-    if (sel == null) sel = (canvas as Record<string, unknown>).selection as unknown;
-    // Array case
-    if (Array.isArray(sel) && sel.length) {
-      const first = sel[0];
-      if (typeof first === 'string') return first;
-      if (first && typeof first === 'object' && 'id' in first && typeof (first as any).id === 'string') return (first as any).id as string;
-    }
-    // Set case
-    if (sel instanceof Set && sel.size) {
-      const first = (sel as Set<unknown>).values().next().value;
-      if (typeof first === 'string') return first;
-      if (first && typeof first === 'object' && 'id' in (first as any)) return (first as any).id as string;
-    }
-    // Object with id
-    if (sel && typeof sel === 'object' && 'id' in (sel as any) && typeof (sel as any).id === 'string') return (sel as any).id as string;
-  } catch {}
-  return null;
-}
-
-export async function tryCanvasAPIsForHit(view: CanvasLikeView, clientX: number, clientY: number): Promise<string | null> {
-  try {
-    const canvas: CanvasLike | undefined = view?.canvas as CanvasLike | undefined;
-    if (!canvas) return null;
-    const methods: Array<string> = [
-      'getNodeAtPos', 'getNodeAtPoint', 'nodeAt', 'hitTest', 'pickNode',
-      'getNodeFromScreenPoint', 'getNodeFromPoint', 'getNodeAtScreenPos', 'getNodeAtScreenPoint'
-    ];
-    for (const m of methods) {
-      const fn = (canvas as Record<string, unknown>)[m];
-      if (typeof fn === 'function') {
-        try {
-          const res: unknown = (fn as Function).call(canvas, clientX, clientY);
-          let id: string | null = null;
-          if (!res) {
-            // no-op
-          } else if (typeof res === 'string') {
-            id = res;
-          } else if (typeof res === 'object') {
-            if ('id' in (res as any) && (res as any).id) id = (res as any).id as string;
-            else if (Array.isArray(res) && res.length) {
-              const first = res[0];
-              if (typeof first === 'string') id = first;
-              else if (first && typeof first === 'object' && 'id' in (first as any)) id = (first as any).id as string;
-            }
-          }
-          if (id) return id;
-        } catch {}
-      }
-    }
-    // No hit-test API produced an id. Selection is intentionally NOT used
-    // as a fallback here: selection is not a hit test, and on background
-    // clicks it can still hold the previously open card, which callers
-    // would mistake for the click target.
-    return null;
   } catch {}
   return null;
 }

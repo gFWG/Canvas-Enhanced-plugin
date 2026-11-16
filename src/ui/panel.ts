@@ -43,6 +43,7 @@ export class PanelController {
   private fontRangeEl!: HTMLInputElement;
   private fontValueEl!: HTMLElement;
   private detachFns: Array<() => void> = [];
+  private activeDragCleanup: (() => void) | null = null;
   private containerPosPatched = false;
   // Track currently applied preset classes so we can swap cleanly
   private currentPanelWidthClass: string | null = null;
@@ -60,7 +61,7 @@ export class PanelController {
   create(): PanelRefs {
     // Ensure container is positioned so the absolute panel anchors correctly
     try {
-      const pos = getComputedStyle(this.container).position;
+      const pos = (this.container.ownerDocument.defaultView ?? window).getComputedStyle(this.container).position;
       if (!pos || pos === 'static') {
         this.container.classList.add('cmside-container-patched');
         this.containerPosPatched = true;
@@ -145,7 +146,7 @@ export class PanelController {
       let changed = false;
       if (s) {
         if (s.fontSize == null || (typeof s.fontSize === 'number' && s.fontSize <= 0)) {
-          const ef = parseInt(getComputedStyle(editorRoot).fontSize || '16', 10);
+          const ef = parseInt((editorRoot.ownerDocument.defaultView ?? window).getComputedStyle(editorRoot).fontSize || '16', 10);
           if (isFinite(ef)) { s.fontSize = Math.max(8, Math.round(ef)); changed = true; }
         }
         if (changed) {
@@ -217,7 +218,7 @@ export class PanelController {
       this.titleEl.setText(text);
       return;
     }
-    const input = document.createElement('input');
+    const input = this.titleEl.ownerDocument.createElement('input');
     input.type = 'text';
     input.className = 'cmside-title-input';
     input.value = text;
@@ -299,8 +300,34 @@ export class PanelController {
   }
 
   // Internal wiring
+  // A panel owns at most one pointer gesture. Ending, cancelling, replacing,
+  // or destroying it removes the temporary window listeners immediately.
+  private trackDrag(panel: HTMLElement, className: string, onMove: (event: PointerEvent) => void, onEnd: () => void): void {
+    const win = panel.ownerDocument.defaultView;
+    if (!win) {
+      panel.classList.remove(className);
+      return;
+    }
+    const cleanup = () => {
+      win.removeEventListener('pointermove', onMove);
+      win.removeEventListener('pointerup', onUp);
+      win.removeEventListener('pointercancel', cleanup);
+      panel.classList.remove(className);
+      if (this.activeDragCleanup === cleanup) this.activeDragCleanup = null;
+    };
+    const onUp = () => {
+      cleanup();
+      onEnd();
+    };
+    this.activeDragCleanup = cleanup;
+    win.addEventListener('pointermove', onMove);
+    win.addEventListener('pointerup', onUp);
+    win.addEventListener('pointercancel', cleanup);
+  }
+
   private setupPanelResize(panel: HTMLElement) {
     const onPanelResizerPointerDown = (ev: PointerEvent) => {
+      this.activeDragCleanup?.();
       ev.preventDefault();
       // Dock direction decides which axis the user is dragging along, and
       // whether the panel grows/shrinks with positive or negative delta.
@@ -337,9 +364,6 @@ export class PanelController {
         }
       };
       const onUp = async () => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        panel.classList.remove('resizing-panel');
         // Persist the new size to the dimension matching the current dock.
         try {
           const s = this.getSettings();
@@ -352,8 +376,7 @@ export class PanelController {
           }
         } catch {}
       };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp, { once: true });
+      this.trackDrag(panel, 'resizing-panel', onMove, () => { void onUp(); });
     };
     const onPanelResizerDblClick = () => {
       try {
@@ -374,15 +397,16 @@ export class PanelController {
   // user pauses (400ms debounce, shared by both sliders) so dragging
   // doesn't spam saveData.
   private setupFontBar() {
+    const win = this.container.ownerDocument.defaultView ?? window;
     let persistTimer: number | null = null;
     const schedulePersist = () => {
-      if (persistTimer != null) window.clearTimeout(persistTimer);
-      persistTimer = window.setTimeout(() => {
+      if (persistTimer != null) win.clearTimeout(persistTimer);
+      persistTimer = win.setTimeout(() => {
         persistTimer = null;
         try { this.persistSettings(this.getSettings()); } catch {}
       }, 400);
     };
-    this.detachFns.push(() => { if (persistTimer != null) window.clearTimeout(persistTimer); });
+    this.detachFns.push(() => { if (persistTimer != null) win.clearTimeout(persistTimer); });
 
     const range = this.fontRangeEl;
     if (range) {
@@ -440,6 +464,7 @@ export class PanelController {
       if (!target) return;
       if (target.closest(KEEP_INTERACTIVE)) return;
 
+      this.activeDragCleanup?.();
       ev.preventDefault();
       const rect = panel.getBoundingClientRect();
       const containerRect = this.container.getBoundingClientRect();
@@ -466,9 +491,6 @@ export class PanelController {
         panel.style.setProperty('--cmside-float-y', `${Math.round(newY)}px`);
       };
       const onUp = async () => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        panel.classList.remove('cmside-floating-dragging');
         try {
           const s = this.getSettings();
           if (!s) return;
@@ -478,8 +500,7 @@ export class PanelController {
           await this.persistSettings(s);
         } catch {}
       };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp, { once: true });
+      this.trackDrag(panel, 'cmside-floating-dragging', onMove, () => { void onUp(); });
     };
     this.toolbarEl.addEventListener('pointerdown', onPointerDown);
     this.detachFns.push(() => this.toolbarEl.removeEventListener('pointerdown', onPointerDown));
@@ -492,6 +513,7 @@ export class PanelController {
     const onPointerDown = (ev: PointerEvent) => {
       if (this.dockPosition !== 'floating') return;
       if (ev.button !== 0) return;
+      this.activeDragCleanup?.();
       ev.preventDefault();
       ev.stopPropagation();
       const startX = ev.clientX;
@@ -514,9 +536,6 @@ export class PanelController {
         panel.style.setProperty('--cmside-float-h', `${Math.round(newH)}px`);
       };
       const onUp = async () => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        panel.classList.remove('cmside-floating-resizing');
         try {
           const s = this.getSettings();
           if (!s) return;
@@ -526,8 +545,7 @@ export class PanelController {
           await this.persistSettings(s);
         } catch {}
       };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp, { once: true });
+      this.trackDrag(panel, 'cmside-floating-resizing', onMove, () => { void onUp(); });
     };
     this.cornerResizerEl.addEventListener('pointerdown', onPointerDown);
     this.detachFns.push(() => this.cornerResizerEl.removeEventListener('pointerdown', onPointerDown));
@@ -575,6 +593,7 @@ export class PanelController {
   }
 
   destroy() {
+    this.activeDragCleanup?.();
     while (this.detachFns.length) {
       const off = this.detachFns.pop();
       try { off && off(); } catch {}

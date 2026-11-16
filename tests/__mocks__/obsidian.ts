@@ -36,6 +36,12 @@ export class Vault {
   modify = vi.fn(async (file: TFile, content: string) => {
     this.files.set(file.path, content);
   });
+  process = vi.fn(async (file: TFile, update: (content: string) => string) => {
+    if (!this.files.has(file.path)) throw new Error('File not found');
+    const content = update(await this.read(file));
+    await this.modify(file, content);
+    return content;
+  });
   createBinary = vi.fn(async (path: string, data: ArrayBuffer) => {
     this.files.set(path, data);
     return new TFile(path);
@@ -67,6 +73,7 @@ export class Vault {
 }
 
 export class Workspace {
+  onLayoutReady = vi.fn((callback: () => void) => callback());
   activeLeaf: any = null;
   private listeners = new Map<string, Set<(...a: any[]) => void>>();
   on = vi.fn((event: string, cb: (...a: any[]) => void): EventRef => {
@@ -106,11 +113,21 @@ export class Keymap {
 
 export class App {
   vault: Vault;
+  fileManager: {
+    renameFile: ReturnType<typeof vi.fn>;
+    getAvailablePathForAttachment: ReturnType<typeof vi.fn>;
+    generateMarkdownLink: ReturnType<typeof vi.fn>;
+  };
   workspace: Workspace;
   scope: Scope;
   keymap: Keymap;
   constructor() {
     this.vault = new Vault();
+    this.fileManager = {
+      renameFile: vi.fn((file: TFile, path: string) => this.vault.rename(file, path)),
+      getAvailablePathForAttachment: vi.fn(async (filename: string, _sourcePath?: string) => filename),
+      generateMarkdownLink: vi.fn((file: TFile, _sourcePath: string) => `[[${file.path}]]`),
+    };
     this.workspace = new Workspace();
     this.scope = new Scope();
     this.keymap = new Keymap();
@@ -119,13 +136,42 @@ export class App {
 
 export type WorkspaceLeaf = { view: unknown };
 
-export class Plugin {
+export class Component {
+  private loaded = false;
+  private children = new Set<Component>();
+  onload(): void {}
+  onunload(): void {}
+  load(): void {
+    if (this.loaded) return;
+    this.loaded = true;
+    this.onload();
+    for (const child of this.children) child.load();
+  }
+  unload(): void {
+    if (!this.loaded) return;
+    this.loaded = false;
+    for (const child of this.children) child.unload();
+    this.onunload();
+  }
+  addChild<T extends Component>(child: T): T {
+    this.children.add(child);
+    if (this.loaded) child.load();
+    return child;
+  }
+  removeChild<T extends Component>(child: T): T {
+    if (this.children.delete(child)) child.unload();
+    return child;
+  }
+}
+
+export class Plugin extends Component {
   app: App;
   manifest: { id: string; version: string };
   // tracked registrations for cleanup-style assertions
   __registered: { events: EventRef[]; dom: Array<{ el: EventTarget; type: string; handler: any }> } = { events: [], dom: [] };
 
   constructor(app: App, manifest: { id: string; version: string }) {
+    super();
     this.app = app;
     this.manifest = manifest;
   }

@@ -62,6 +62,10 @@ export class EditorSession {
   private editorRootEl: HTMLElement | null = null;
   private previewRootEl: HTMLElement | null = null;
   private previewHelper: PreviewHelper | null = null;
+  private detachPreviewLinks: (() => void) | null = null;
+  private warnedLiveFallback = false;
+  // A captured baseline belongs to its source editor, including queued saves.
+  private fileBuffer: { path: string; baseline: string } | null = null;
   private applyToolbarIcon: ((mode: ViewMode) => void) | null = null;
   private sideEditorScope: SideEditorScope | null = null;
 
@@ -94,6 +98,10 @@ export class EditorSession {
   // Each call captures its own myGen on entry and bails after every await
   // if a newer call has bumped the counter.
   private openGeneration: number = 0;
+  // Saves may be requested by several Canvas gestures while an earlier disk
+  // write is still pending. Keep their captured buffers in request order.
+  private saveTail: Promise<void> = Promise.resolve();
+  private lastSave: Promise<void> = Promise.resolve();
 
   constructor(deps: EditorSessionDeps) {
     this.app = deps.app;
@@ -146,11 +154,17 @@ export class EditorSession {
       );
       const refs = this.panelController.create();
       this.panelEl = refs.panelEl;
+      // A native Canvas picker can restore its previous focus after the side
+      // panel has closed. Redirect that late focus instead of leaving typing
+      // active in an editor hidden off screen.
+      this.panelEl.addEventListener('focusin', () => {
+        if (!this.currentNodeId && !this.panelEl?.classList.contains('open')) this.focusCanvasFromPanel();
+      });
       this.editorRootEl = refs.editorRootEl;
       this.previewRootEl = refs.previewRootEl;
       if (!this.previewHelper) this.previewHelper = new PreviewHelper(this.app, this.plugin);
       this.previewHelper.setContainer(this.previewRootEl!);
-      attachPreviewLinkInterop({
+      this.detachPreviewLinks = attachPreviewLinkInterop({
         app: this.app,
         plugin: this.plugin,
         container: this.previewRootEl!,
@@ -165,7 +179,7 @@ export class EditorSession {
       applyIcon(this.getSettings().viewMode);
 
       this.panelController.onToggle(() => { this.cycleViewMode(); });
-      this.panelController.onClose(() => { try { void this.saveAndClose(view); } catch {} });
+      this.panelController.onClose(() => { void this.saveAndClose(view).catch(() => {}); });
       this.applyToolbarIcon = applyIcon; // expose for setViewMode to repaint
       this.sideEditorScope = new SideEditorScope(this.app, () => this.cm6Host.view);
       this.sideEditorScope.install();
@@ -173,7 +187,12 @@ export class EditorSession {
     }
   }
 
-  teardown(): void {
+  teardown(pendingSave?: Promise<void>): void {
+    // Invalidate file reads/host opens that were pending when the view closed.
+    this.openGeneration++;
+    this.previewHelper?.setContainer(null);
+    this.detachPreviewLinks?.();
+    this.detachPreviewLinks = null;
     if (this.sideEditorScope) {
       this.sideEditorScope.uninstall();
       this.sideEditorScope = null;
@@ -187,8 +206,12 @@ export class EditorSession {
     this.applyToolbarIcon = null;
     // Drop the embedded live-preview leaf (if any) before nuking the panel.
     if (this.leafHost) {
-      try { void this.leafHost.detach(); } catch {}
+      const host = this.leafHost;
       this.leafHost = null;
+      // Obsidian does not await onunload. Keep the native view alive until
+      // the final captured save settles, even if a previous save is queued.
+      if (pendingSave) void pendingSave.then(() => host.detach(), () => host.detach());
+      else void host.detach();
     }
     this.usingLeafHost = false;
     void this.cm6Host.dispose();
@@ -201,14 +224,29 @@ export class EditorSession {
     this.currentNodeId = null;
     this.currentCanvasFile = null;
     this.currentNode = null;
+    this.fileBuffer = null;
   }
 
   close(): void {
-    // TEMP debug tracing — remove with the [cmside] logs in interaction.ts.
-    try { console.debug('[cmside] close(): open before =', this.panelEl?.classList.contains('open')); } catch {}
+    this.openGeneration++;
     if (this.panelEl) this.panelEl.classList.remove('open');
     this.currentNodeId = null;
-    try { console.debug('[cmside] close(): open after =', this.panelEl?.classList.contains('open')); } catch {}
+    this.focusCanvasFromPanel();
+  }
+
+  private focusCanvasFromPanel(): void {
+    const panel = this.panelEl;
+    const active = panel?.ownerDocument.activeElement;
+    if (!panel || !active || !panel.contains(active)) return;
+    const canvas = this.boundView?.containerEl.querySelector<HTMLElement>('.canvas-wrapper');
+    if (canvas?.isConnected && canvas.ownerDocument === panel.ownerDocument) {
+      try { canvas.focus({ preventScroll: true }); } catch {}
+    }
+    // If there is no focusable Canvas wrapper, at least blur the hidden editor.
+    const stillActive = panel.ownerDocument.activeElement as HTMLElement | null;
+    if (stillActive && panel.contains(stillActive) && typeof stillActive.blur === 'function') {
+      try { stillActive.blur(); } catch {}
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -216,7 +254,8 @@ export class EditorSession {
   // ---------------------------------------------------------------------
 
   async save(view: CanvasLikeView): Promise<void> {
-    if (!this.currentNodeId) return;
+    const nodeId = this.currentNodeId;
+    if (!nodeId) return;
     // File cards routed through the live-preview leaf write directly to
     // the bound .md file. We never dump anything into the canvas JSON for
     // them since file cards only reference the file by path. But the
@@ -224,47 +263,78 @@ export class EditorSession {
     // close-panel / switch-canvas paths don't lose typed-but-unsaved
     // content if the user just stopped typing.
     if (this.usingLeafHost) {
-      try { await this.leafHost?.flush(); } catch {}
+      const markdownView = this.leafHost?.getView();
+      if (!markdownView) return;
+      const save = this.saveTail.then(async () => { await markdownView.save(); });
+      this.lastSave = save;
+      this.saveTail = save.catch(() => {});
+      await save;
       return;
     }
     const cmView = this.cm6Host.view;
     if (!cmView) return;
     const newText = cmView.state.doc.toString();
-    await writeNodeContent(this.app, view, this.currentNode, this.currentNodeId, newText);
+    const node = this.currentNode ? { ...this.currentNode } : null;
+    const fileBuffer = this.fileBuffer;
+    const save = this.saveTail.then(async () => {
+      if (fileBuffer && fileBuffer.baseline === newText) return;
+      await writeNodeContent(this.app, view, node, nodeId, newText, fileBuffer?.baseline);
+      if (fileBuffer) fileBuffer.baseline = newText;
+    });
+    this.lastSave = save;
+    this.saveTail = save.catch(() => {});
+    await save;
+  }
+
+  // Typing can continue while a disk write is pending. Do not replace the
+  // mounted editor until the last captured write contains its current buffer.
+  private async saveUntilStable(view: CanvasLikeView, generation: number): Promise<boolean> {
+    // Do not replace a closed editor while an earlier captured save remains
+    // in flight; a failed write must not be mistaken for a successful flush.
+    if (!this.currentNodeId) await this.lastSave;
+    if (this.openGeneration !== generation) return false;
+    while (this.currentNodeId) {
+      const nodeId = this.currentNodeId;
+      const leaf = this.usingLeafHost;
+      const before = leaf ? this.leafHost?.getValue() : this.cm6Host.getValue();
+      await this.save(view);
+      if (this.openGeneration !== generation || this.currentNodeId !== nodeId || this.usingLeafHost !== leaf) return false;
+      const after = leaf ? this.leafHost?.getValue() : this.cm6Host.getValue();
+      if (before === after) return true;
+    }
+    return this.openGeneration === generation;
+  }
+
+  // View changes must flush all typing that occurs during the write before
+  // tearing down the currently mounted editor.
+  async saveStable(view: CanvasLikeView): Promise<boolean> {
+    return this.saveUntilStable(view, this.openGeneration);
   }
 
   async saveAndClose(view: CanvasLikeView): Promise<void> {
-    // Kick the save off first — its synchronous prefix captures everything
-    // it needs (node id, editor buffer, leaf host) before the first await —
-    // then hide the panel immediately so a slow or hung save (e.g. a
-    // detached-leaf flush) can never block the close.
-    const pendingSave = this.save(view).catch(() => {});
-    this.close();
-    await pendingSave;
-    try { console.debug('[cmside] saveAndClose: finished'); } catch {}
+    // Cancel pending opens immediately, but keep the editor mounted until its
+    // latest buffer is saved. A failed write leaves the buffer available.
+    const generation = ++this.openGeneration;
+    try {
+      if (await this.saveUntilStable(view, generation)) this.close();
+    } catch (error) {
+      const reason = error instanceof Error ? ` ${error.message}.` : '';
+      new Notice(`Could not save the note.${reason}${this.panelEl ? ' The editor remains open.' : ''}`);
+      throw error;
+    }
   }
 
   async open(view: CanvasLikeView, node: CanvasNode): Promise<void> {
     // Stake out a unique generation for this invocation. Concurrent
     // rapid clicks bump the counter; if our gen is no longer current
     // after any await, we must bail before applying side effects.
-    const myGen = ++this.openGeneration;
-
     // Safety net: drop any orphaned panel reference before (re)building.
     if (this.panelEl && !this.panelEl.isConnected) {
       this.teardown();
     }
+    const myGen = ++this.openGeneration;
     this.ensurePanel(view);
     if (!this.panelEl || !this.editorRootEl) return;
-    this.currentNodeId = node.id;
-    this.currentNode = node;
-    const file: TFile | undefined = view?.file;
-    this.currentCanvasFile = file ?? null;
-    this.currentSourcePath =
-      node.type === 'file' && typeof node.file === 'string'
-        ? node.file
-        : this.currentCanvasFile?.path ?? '';
-    this.previewHelper?.setSourcePath(this.currentSourcePath);
 
     // Load content (only used by the CM6 editor path; the MarkdownLeafHost
     // reads directly from the file).
@@ -273,11 +343,32 @@ export class EditorSession {
       initial = node.text ?? '';
     } else if (node.type === 'file' && typeof node.file === 'string') {
       const mdFile = resolveVaultFile(this.app, node.file);
-      if (mdFile) {
-        initial = await this.app.vault.read(mdFile);
-        if (this.openGeneration !== myGen) return;
-      }
+      if (!mdFile) throw new Error('The linked Markdown file no longer exists.');
+      initial = await this.app.vault.read(mdFile);
+      if (this.openGeneration !== myGen) return;
     }
+
+    // While the new file loads, saves still belong to the mounted editor.
+    // Flush any edits made during that wait before replacing its identity.
+    const baselineBeforeFlush = this.fileBuffer?.baseline;
+    if (!await this.saveUntilStable(view, myGen)) return;
+    // Two cards may reference the same file. Prefer the mounted buffer over
+    // the snapshot read before the final flush, including typing during it.
+    if (node.type === 'file' && this.currentNode?.type === 'file' && node.file === this.currentNode.file
+      && (this.usingLeafHost || this.fileBuffer?.baseline !== baselineBeforeFlush)) {
+      initial = (this.usingLeafHost ? this.leafHost?.getValue() : this.cm6Host.getValue()) ?? initial;
+    }
+    this.currentNodeId = node.id;
+    this.currentNode = node;
+    this.fileBuffer = node.type === 'file' && typeof node.file === 'string'
+      ? { path: node.file, baseline: initial } : null;
+    const file: TFile | undefined = view?.file;
+    this.currentCanvasFile = file ?? null;
+    this.currentSourcePath =
+      node.type === 'file' && typeof node.file === 'string'
+        ? node.file
+        : this.currentCanvasFile?.path ?? '';
+    this.previewHelper?.setSourcePath(this.currentSourcePath);
 
     // Live Preview leaf hijack (issue #9 / #20). The cold-start race that
     // previously blocked this is resolved by MarkdownLeafHost calling
@@ -305,17 +396,20 @@ export class EditorSession {
       if (liveView) {
         this.usingLeafHost = true;
       } else {
-        // Couldn't construct a leaf on this Obsidian build — quiet
-        // per-session fallback to CM6 source mode. Don't persist this;
-        // the next card / next session may succeed.
+        // Keep editing available through CM6 without changing the saved
+        // preference. The next card may support native Live Preview.
         try { await this.leafHost.detach(); } catch {}
         if (this.openGeneration !== myGen) return;
         this.usingLeafHost = false;
+        if (!this.warnedLiveFallback) {
+          this.warnedLiveFallback = true;
+          new Notice('Native Live Preview is unavailable. Using the source editor instead.');
+        }
         await this.openCmEditor(initial);
         if (this.openGeneration !== myGen) return;
       }
     } else {
-      if (this.leafHost) {
+      if (this.leafHost && this.usingLeafHost) {
         await this.leafHost.detach();
         if (this.openGeneration !== myGen) return;
       }
@@ -353,18 +447,6 @@ export class EditorSession {
 
     // Slide in
     this.panelEl.classList.add('open');
-    // Re-render shortly after opening to account for layout/transition
-    // timing. We deliberately use initialForPreview rather than reading
-    // from the CM6 view here: in preview-only view mode openCmEditor is
-    // skipped, so cmView retains content from whatever card was last opened
-    // in editor or both view mode. Reading from it at +80ms would clobber
-    // the correct preview we just rendered with that stale content. If the
-    // user is editing in editor or both view mode, schedulePreviewRender's
-    // debounced path will reflect those edits independently of this nudge.
-    setTimeout(() => {
-      if (this.openGeneration !== myGen) return;
-      void this.renderPreview(initialForPreview);
-    }, 80);
     // Focus editor for immediate typing (skip in preview-only view mode)
     if (this.getSettings().viewMode !== 'preview') {
       try {
@@ -396,13 +478,18 @@ export class EditorSession {
   private async rebuildCmViewForCurrentNode(): Promise<void> {
     const node = this.currentNode;
     if (!node) return;
+    const generation = this.openGeneration;
     let initial = '';
     if (node.type === 'text') {
       initial = node.text ?? '';
     } else if (node.type === 'file' && typeof node.file === 'string') {
       const f = resolveVaultFile(this.app, node.file);
-      if (f) initial = await this.app.vault.read(f);
+      if (!f) throw new Error('The linked Markdown file no longer exists.');
+      initial = await this.app.vault.read(f);
     }
+    if (generation !== this.openGeneration || this.currentNode !== node) return;
+    this.fileBuffer = node.type === 'file' && typeof node.file === 'string'
+      ? { path: node.file, baseline: initial } : null;
     await this.openCmEditor(initial);
   }
 
@@ -516,15 +603,23 @@ export class EditorSession {
   // ---------------------------------------------------------------------
 
   private async handlePasteImages(files: File[], view: EditorView): Promise<void> {
+    const generation = this.openGeneration;
+    const nodeId = this.currentNodeId;
+    const sourcePath = this.currentSourcePath;
     try {
-      const insertText = await savePastedImagesToVault(this.app, files, this.currentSourcePath || '');
+      const insertText = await savePastedImagesToVault(this.app, files, sourcePath);
       if (insertText == null) return;
+      if (this.openGeneration !== generation || this.currentNodeId !== nodeId || this.cm6Host.view !== view) {
+        new Notice('Images were saved as attachments, but the card changed before their links could be inserted.');
+        return;
+      }
       const tr = view.state.update({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: insertText } });
       view.dispatch(tr);
       // schedule preview render with new content
       this.schedulePreviewRender();
     } catch (e) {
-      try { console.error('CanvasMdSideEditor: handlePasteImages failed', e); } catch {}
+      console.error('CanvasMdSideEditor: handlePasteImages failed', e);
+      new Notice('Could not paste images. ' + (e instanceof Error ? e.message : 'Please try again.'));
     }
   }
 
@@ -555,7 +650,10 @@ export class EditorSession {
     if (node.type === 'text') {
       const initialTitle = extractTitleFromText(currentContent);
       this.panelController.setTitle(initialTitle, (newTitle) => {
-        void this.commitTextTitle(view, newTitle);
+        void this.commitTextTitle(view, newTitle).catch(error => {
+          console.error('CanvasMdSideEditor: could not save the card title', error);
+          new Notice('Could not save the card title. Your edits remain in the side panel.');
+        });
       });
       return;
     }
@@ -575,13 +673,19 @@ export class EditorSession {
       this.refreshCardTitle();
       return;
     }
+    const sourcePath = file.path;
+    const generation = this.openGeneration;
+    const fileBuffer = this.fileBuffer;
     try {
-      await this.app.vault.rename(file, plan.path);
+      await this.app.fileManager.renameFile(file, plan.path);
       // Keep our in-memory references in sync so subsequent saves go to the
       // new path rather than the now-defunct one.
       if (typeof node.file === 'string') node.file = plan.path;
-      this.currentSourcePath = plan.path;
-      this.previewHelper?.setSourcePath(plan.path);
+      if (fileBuffer?.path === sourcePath) fileBuffer.path = plan.path;
+      if (this.openGeneration === generation && this.currentNode === node) {
+        this.currentSourcePath = plan.path;
+        this.previewHelper?.setSourcePath(plan.path);
+      }
     } catch {
       new Notice('Rename failed');
       this.refreshCardTitle();

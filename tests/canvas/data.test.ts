@@ -61,6 +61,13 @@ describe('readCanvasData', () => {
     const result = await readCanvasData(app, view);
     expect(result).toBeNull();
   });
+
+  it('rejects malformed Canvas JSON rather than treating it as valid data', async () => {
+    const app = new App();
+    const file = new TFile('bad.canvas');
+    (app.vault as any).__seed('bad.canvas', JSON.stringify({ nodes: [null], edges: [] }));
+    expect(await readCanvasData(app, makeView({ file }))).toBeNull();
+  });
 });
 
 describe('getCanvasNodeById', () => {

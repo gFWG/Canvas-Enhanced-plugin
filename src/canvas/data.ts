@@ -22,8 +22,8 @@ export async function readCanvasData(app: App, view: CanvasLikeView): Promise<Ca
     const file: TFile | undefined = view?.file as TFile | undefined;
     if (!file) return null;
     const raw = await app.vault.read(file);
-    const data = JSON.parse(raw) as CanvasData;
-    return data;
+    const data: unknown = JSON.parse(raw);
+    return isCanvasData(data) ? data : null;
   } catch {
     return null;
   }
@@ -42,64 +42,74 @@ export async function writeNodeContent(
   currentNode: CanvasNode | null,
   nodeId: string,
   text: string,
+  expectedText?: string,
 ): Promise<void> {
   const node = currentNode;
-  if (node?.type === 'file' && typeof node.file === 'string') {
+  if (!node || node.id !== nodeId) throw new Error('Canvas node is no longer available');
+  if (node.type === 'file') {
+    if (typeof node.file !== 'string') throw new Error('Canvas note has no file path');
     const mdFile = resolveVaultFile(app, node.file);
-    if (mdFile) {
-      try {
-        await app.vault.modify(mdFile, text);
-      } catch (e) {
-        console.error('CanvasMdSideEditor: failed to write file node content', e);
-      }
+    if (!mdFile) throw new Error('Canvas note file is no longer available');
+    if (expectedText === undefined) {
+      await app.vault.modify(mdFile, text);
+    } else {
+      await app.vault.process(mdFile, current => {
+        if (current !== expectedText && current !== text) {
+          throw new Error('The note changed outside the side editor');
+        }
+        return text;
+      });
     }
     // try to ask canvas to refresh/save
     try {
-      const canvas = (view as any)?.canvas;
+      const canvas = view?.canvas;
       if (canvas?.requestSave) canvas.requestSave();
     } catch {}
     return;
   }
-  // Try in-memory canvas API first if present
-  try {
-    const canvas: CanvasLike | undefined = view?.canvas as CanvasLike | undefined;
-    if (canvas?.updateNode) {
-      canvas.updateNode(nodeId, { text });
-      canvas.requestSave?.();
-      return;
-    }
-    if (canvas?.setNodeText) {
-      canvas.setNodeText(nodeId, text);
-      canvas.requestSave?.();
-      return;
-    }
-  } catch {}
-
-  // Fallback: write to file JSON
-  const maybeFile: unknown = (view as unknown as { file?: TFile; viewState?: { file?: TFile } })?.file
-    ?? (view as unknown as { viewState?: { file?: TFile } })?.viewState?.file
-    ?? view?.file;
-  if (!(maybeFile instanceof TFile)) return;
-  const file: TFile = maybeFile;
-  try {
-    const raw = await app.vault.read(file);
-    const data = JSON.parse(raw) as CanvasData;
-    const idx = data.nodes.findIndex((n) => n.id === nodeId);
-    if (idx !== -1) {
-      data.nodes[idx].text = text;
-      await app.vault.modify(file, JSON.stringify(data, null, 2));
-      try {
-        const canvas: CanvasLike | undefined = view?.canvas as CanvasLike | undefined;
-        canvas?.requestSave?.();
-      } catch {}
-    }
-  } catch (e) {
-    console.error('CanvasMdSideEditor: failed to write canvas text', e);
+  if (node.type !== 'text') throw new Error('Canvas node cannot contain text');
+  // Try the in-memory Canvas API first. If it fails, propagate the failure
+  // instead of reporting success or writing over a live Canvas on disk.
+  const canvas: CanvasLike | undefined = view?.canvas as CanvasLike | undefined;
+  if (canvas?.getData) {
+    const liveData = canvas.getData();
+    if (!isCanvasData(liveData)) throw new Error('Canvas data is unavailable');
+    const liveNode = liveData.nodes.find(n => n.id === nodeId);
+    if (!liveNode || liveNode.type !== 'text') throw new Error('Canvas text node is no longer available');
   }
+  if (canvas?.updateNode) {
+    canvas.updateNode(nodeId, { text });
+    canvas.requestSave?.();
+    return;
+  }
+  if (canvas?.setNodeText) {
+    canvas.setNodeText(nodeId, text);
+    canvas.requestSave?.();
+    return;
+  }
+  if (canvas) {
+    // A loaded Canvas may have unsaved in-memory changes. Updating only its
+    // backing file could be overwritten by its next native save.
+    throw new Error('Canvas text editing is unavailable in this view');
+  }
+
+  // A detached file-only view can safely update its current JSON atomically.
+  const maybeFile: unknown = view?.file;
+  if (!(maybeFile instanceof TFile)) throw new Error('Canvas file is no longer available');
+  const file: TFile = maybeFile;
+  await app.vault.process(file, raw => {
+    const data: unknown = JSON.parse(raw);
+    if (!isCanvasData(data)) throw new Error('Invalid Canvas file');
+    const target = data.nodes.find(n => n && n.id === nodeId);
+    if (!target || target.type !== 'text') throw new Error('Canvas text node is no longer available');
+    target.text = text;
+    return JSON.stringify(data, null, 2);
+  });
 }
 
 function isCanvasData(x: unknown): x is CanvasData {
   if (!x || typeof x !== 'object') return false;
   const obj = x as Record<string, unknown>;
-  return Array.isArray(obj.nodes) && Array.isArray(obj.edges);
+  return Array.isArray(obj.nodes) && Array.isArray(obj.edges)
+    && obj.nodes.every(node => node && typeof node === 'object' && typeof node.id === 'string');
 }

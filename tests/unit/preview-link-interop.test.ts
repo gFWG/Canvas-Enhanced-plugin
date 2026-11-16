@@ -223,4 +223,32 @@ describe('attachPreviewLinkInterop — idempotency', () => {
 
     expect(app.workspace.trigger).toHaveBeenCalledTimes(1);
   });
+
+  it('detaches listeners and can reattach to the same panel', () => {
+    const app = new App();
+    const plugin = makePlugin(app);
+    const container = makeContainer('<a class="internal-link" data-href="N">N</a>');
+    const detach = attachPreviewLinkInterop({ app, plugin, container, getSourcePath: () => '' });
+    detach();
+    container.querySelector('a')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(app.workspace.openLinkText).not.toHaveBeenCalled();
+    attachPreviewLinkInterop({ app, plugin, container, getSourcePath: () => '' });
+    container.querySelector('a')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(app.workspace.openLinkText).toHaveBeenCalledOnce();
+  });
+
+  it('handles rejected openLinkText calls', async () => {
+    const app = new App();
+    const plugin = makePlugin(app);
+    const container = makeContainer('<a class="internal-link" data-href="N">N</a>');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(app.workspace.openLinkText).mockRejectedValueOnce(new Error('open failed'));
+    const detach = attachPreviewLinkInterop({ app, plugin, container, getSourcePath: () => '' });
+    container.querySelector('a')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(log).toHaveBeenCalledWith('CanvasMdSideEditor: link click interop failed', expect.any(Error));
+    });
+    detach();
+    log.mockRestore();
+  });
 });

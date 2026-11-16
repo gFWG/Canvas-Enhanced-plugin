@@ -1,7 +1,7 @@
 {
 	"name": "canvas-markdown-side-editor",
 	"version": "2.0.0",
-	"description": "Open a Canvas card's linked Markdown file in a right-side editor pane with one click.",
+	"description": "Edit Canvas Markdown file cards in a side panel and show their headings as an outline.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -26,15 +26,14 @@
 		"@types/node": "24.19.2",
 		"@typescript-eslint/eslint-plugin": "5.29.0",
 		"@typescript-eslint/parser": "5.29.0",
-		"@vitest/coverage-v8": "^1.6.1",
-		"builtin-modules": "3.3.0",
-		"esbuild": "0.17.3",
+		"@vitest/coverage-v8": "5.1.0",
+		"esbuild": "0.28.2",
 		"eslint": "8.57.1",
-		"happy-dom": "^14.12.3",
-		"obsidian": "latest",
+		"happy-dom": "21.0.4",
+		"obsidian": "1.14.4",
 		"tslib": "2.4.0",
 		"typescript": "5.9.3",
-		"vitest": "^1.6.1"
+		"vitest": "5.1.0"
 	},
 	"dependencies": {
 		"@codemirror/commands": "^6.10.3",

@@ -1,29 +1,6 @@
-// Live Preview host (issue #9 / #20).
-//
-// Hosts a real Obsidian `MarkdownView` inside our side panel by creating a
-// `WorkspaceLeaf` via the (undocumented but stable) runtime constructor and
-// reparenting the view's container into a chosen mount point. This gives
-// the side panel the full Live Preview experience — wikilinks, embeds,
-// callouts, hidden markers, the whole thing — for `file`-type canvas
-// nodes (which point at a real .md file in the vault).
-//
-// Why undocumented constructor: Obsidian's public API only exposes
-// `Workspace.getLeaf(...)` which always attaches a leaf to the workspace
-// tree (creating a visible tab). To embed a hidden, side-panel-only
-// MarkdownView we need a leaf that has no workspace parent. Multiple
-// long-lived community plugins (Hover Editor, Make.md, Edit-in-Modal)
-// rely on the same pattern.
-//
-// Cold-start race & loadIfDeferred(): Obsidian 1.7.2+ flips background /
-// detached leaves into a "deferred" state where `leaf.view` is a
-// `DeferredView` placeholder rather than the real `MarkdownView`. Earlier
-// attempts (pre-warm at layout-ready, retry-once) tried to work around
-// this empirically and were both reverted. The proper fix is the official
-// `leaf.loadIfDeferred()` API: after `setViewState`, if the leaf still
-// reports `isDeferred`, we await loadIfDeferred() to promote the view.
-// Falls through silently on Obsidian < 1.7.2 (those builds don't have
-// deferred views, so the leaf.view is already a real MarkdownView).
-
+// Obsidian has no public API for an embedded Markdown editor. Keep the
+// optional detached-leaf integration here; callers fall back to CM6 when
+// its runtime contract is unavailable. loadIfDeferred is public since 1.7.2.
 import { App, MarkdownView, TFile, WorkspaceLeaf } from 'obsidian';
 import type { EditorHost } from './editor-host';
 
@@ -38,6 +15,9 @@ export class MarkdownLeafHost implements EditorHost {
   private app: App;
   private leaf: WorkspaceLeaf | null = null;
   private mountEl: HTMLElement | null = null;
+  private generation = 0;
+  private resizeFrame: number | null = null;
+  private frameWindow: Window | null = null;
 
   constructor(app: App) {
     this.app = app;
@@ -47,7 +27,11 @@ export class MarkdownLeafHost implements EditorHost {
   // `mountEl`. Returns the live `MarkdownView` on success, or null if the
   // runtime refused to construct a detached leaf.
   async open(file: TFile, mountEl: HTMLElement): Promise<MarkdownView | null> {
-    await this.detach();
+    // detach clears synchronously, so overlapping opens cannot capture the
+    // same generation while awaiting a previous detach.
+    void this.detach();
+    const generation = this.generation;
+    const isCurrent = () => this.generation === generation && this.mountEl === mountEl;
     this.mountEl = mountEl;
 
     let leaf: WorkspaceLeaf;
@@ -58,6 +42,10 @@ export class MarkdownLeafHost implements EditorHost {
       return null;
     }
     this.leaf = leaf;
+    if (typeof leaf.setViewState !== 'function' || typeof leaf.detach !== 'function') {
+      await this.detach();
+      return null;
+    }
 
     // Force Live Preview regardless of the user's global default by passing
     // `source: false` alongside `mode: 'source'`. (Obsidian exposes "Live
@@ -69,9 +57,10 @@ export class MarkdownLeafHost implements EditorHost {
       });
     } catch (e) {
       try { console.error('CanvasMdSideEditor: setViewState failed', e); } catch {}
-      await this.detach();
+      if (isCurrent()) await this.detach();
       return null;
     }
+    if (!isCurrent()) return null;
 
     // Promote a DeferredView placeholder into the real MarkdownView before
     // we read `leaf.view`. On Obsidian < 1.7.2 both isDeferred and
@@ -82,13 +71,19 @@ export class MarkdownLeafHost implements EditorHost {
         await leafDeferred.loadIfDeferred();
       } catch (e) {
         try { console.error('CanvasMdSideEditor: loadIfDeferred failed', e); } catch {}
-        await this.detach();
+        if (isCurrent()) await this.detach();
         return null;
       }
     }
+    if (!isCurrent()) return null;
+    if (leafDeferred.isDeferred) {
+      await this.detach();
+      return null;
+    }
 
     const view = leaf.view;
-    if (!(view instanceof MarkdownView)) {
+    if (!(view instanceof MarkdownView) || typeof view.save !== 'function'
+      || typeof view.getViewData !== 'function' || typeof view.editor?.focus !== 'function') {
       try { console.warn('CanvasMdSideEditor: leaf.view is not a MarkdownView', view); } catch {}
       await this.detach();
       return null;
@@ -108,9 +103,14 @@ export class MarkdownLeafHost implements EditorHost {
     // Some Obsidian builds don't lay out the editor until they think the
     // view is "loaded" in the workspace. Trigger a manual measure on the
     // next frame too, just in case.
-    try {
-      requestAnimationFrame(() => { try { view.onResize(); } catch {} });
-    } catch {}
+    const win = mountEl.ownerDocument.defaultView;
+    if (win) {
+      this.frameWindow = win;
+      this.resizeFrame = win.requestAnimationFrame(() => {
+        this.resizeFrame = null;
+        if (isCurrent()) { try { view.onResize(); } catch {} }
+      });
+    }
 
     return view;
   }
@@ -122,7 +122,7 @@ export class MarkdownLeafHost implements EditorHost {
   async save(): Promise<void> {
     const v = this.getView();
     if (!v) return;
-    try { await v.save(); } catch {}
+    await v.save();
   }
 
   // EditorHost.flush — same flush, interface name.
@@ -131,6 +131,10 @@ export class MarkdownLeafHost implements EditorHost {
   }
 
   async detach(): Promise<void> {
+    this.generation++;
+    if (this.resizeFrame !== null) this.frameWindow?.cancelAnimationFrame(this.resizeFrame);
+    this.resizeFrame = null;
+    this.frameWindow = null;
     if (this.leaf) {
       const leaf = this.leaf;
       this.leaf = null;

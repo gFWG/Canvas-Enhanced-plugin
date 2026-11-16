@@ -35,7 +35,7 @@ window.getComputedStyle = ((el: Element) => {
 
 function makeCanvasView(containerEl: HTMLElement): CanvasLikeView {
   const canvasObj: any = {
-    getData: () => ({ nodes: [], edges: [] }),
+    getData: () => ({ nodes: [{ id: 'n1', type: 'text', text: 'hello world' }], edges: [] }),
     requestSave: () => {},
     updateNode: () => {},
   };
@@ -161,7 +161,7 @@ describe('view-mode toggle leaves editor pane non-blank', () => {
       plugin.onunload();
     });
 
-    it('does not show the notice for a file card or when no card is open', async () => {
+    it('does not show the text-card notice for a file card or when no card is open', async () => {
       const app = new App();
       (app.vault as any).__seed('notes/example.md', 'content');
       const plugin = await makePluginInEditorMode(app);
@@ -175,7 +175,8 @@ describe('view-mode toggle leaves editor pane non-blank', () => {
       const error = vi.spyOn(console, 'error').mockImplementation(() => {});
       await (plugin as any).openEditorForNode(view, { id: 'f1', type: 'file', file: 'notes/example.md' });
       await plugin.setViewMode('live');
-      expect(__notices).toEqual([]);
+      expect(__notices).not.toContain(notice);
+      expect(__notices).toContain('Native Live Preview is unavailable. Using the source editor instead.');
       error.mockRestore();
       plugin.onunload();
     });

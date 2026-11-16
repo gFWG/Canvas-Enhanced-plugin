@@ -467,3 +467,48 @@ describe('PanelController.destroy', () => {
     expect(cb).not.toHaveBeenCalled();
   });
 });
+
+describe('temporary drag listeners', () => {
+  const cases = [
+    { name: 'docked resize', dock: 'right' as const, selector: '.cmside-panel-resizer', activeClass: 'resizing-panel' },
+    { name: 'floating drag', dock: 'floating' as const, selector: '.cmside-title', activeClass: 'cmside-floating-dragging' },
+    { name: 'floating resize', dock: 'floating' as const, selector: '.cmside-corner-resizer', activeClass: 'cmside-floating-resizing' },
+  ];
+
+  it.each(cases.flatMap(entry => ['destroy', 'cancel'].map(end => ({ ...entry, end }))))(
+    'stops $name immediately on $end',
+    async ({ dock, selector, activeClass, end }) => {
+      const { controller, persistSettings } = setup({ dockPosition: dock, fontSize: 14 });
+      const { panelEl } = controller.create();
+      const origin = panelEl.querySelector<HTMLElement>(selector)!;
+      origin.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }));
+      expect(panelEl.classList.contains(activeClass)).toBe(true);
+
+      if (end === 'destroy') controller.destroy();
+      else window.dispatchEvent(new PointerEvent('pointercancel'));
+      expect(panelEl.classList.contains(activeClass)).toBe(false);
+      const before = { style: panelEl.style.cssText, classes: panelEl.className };
+      persistSettings.mockClear();
+
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 250, clientY: 250 }));
+      window.dispatchEvent(new PointerEvent('pointerup'));
+      await Promise.resolve();
+      expect(panelEl.style.cssText).toBe(before.style);
+      expect(panelEl.className).toBe(before.classes);
+      expect(persistSettings).not.toHaveBeenCalled();
+      controller.destroy();
+    },
+  );
+
+  it('replaces an earlier drag instead of persisting it twice', async () => {
+    const { controller, persistSettings } = setup({ dockPosition: 'floating', fontSize: 14 });
+    const { panelEl } = controller.create();
+    const title = panelEl.querySelector<HTMLElement>('.cmside-title')!;
+    title.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+    title.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
+    window.dispatchEvent(new PointerEvent('pointerup'));
+    await Promise.resolve();
+    expect(persistSettings).toHaveBeenCalledTimes(1);
+    controller.destroy();
+  });
+});

@@ -3,6 +3,7 @@ export type CanvasNode = {
   type: 'text' | 'file' | 'link' | string;
   text?: string; // when type = 'text'
   file?: string; // when type = 'file'
+  subpath?: string; // heading or block target when type = 'file'
   x?: number;
   y?: number;
   width?: number;
