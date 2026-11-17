@@ -350,4 +350,34 @@ describe('cleanup and clipping', () => {
     expect(node.classList.contains('cmside-headline-card')).toBe(false);
     expect(document.body.classList.contains('cmside-headline-mode')).toBe(false);
   });
+
+  it.each(['outline', 'heading'] as const)('keeps configured pixel font sizes when a %s card is resized', kind => {
+    applyHeadlineMode({
+      ...DEFAULT_SETTINGS, headlineMode: true,
+      headlineH1Size: 30, headlineBadgeSize: 20,
+      headlineCategorySize: 18, headlineSubtitleSize: 14,
+    });
+    const subtitle = note('subtitle', 'P01 | Category');
+    const node = kind === 'outline'
+      ? card(`<h1>Title</h1>${subtitle}`)
+      : card(subtitle, '<div class="inline-title">Title</div>');
+    if (kind === 'outline') outline(node);
+    else narrow(node, 'Title', 1);
+    const placeholder = document.createElement('div');
+    placeholder.className = 'canvas-node-placeholder';
+    node.append(placeholder);
+    for (const [width, height] of [[400, 200], [600, 300], [800, 100]]) {
+      node.style.width = `${width}px`;
+      node.style.height = `${height}px`;
+      for (const [selector, expected] of [
+        ['.cmside-headline-title', '30px'],
+        ['.cmside-hl-badge', '20px'],
+        ['.cmside-hl-category', '18px'],
+        ['.cmside-headline-note', '14px'],
+        ['.canvas-node-placeholder', '30px'],
+      ]) {
+        expect(getComputedStyle(node.querySelector(selector)!).fontSize).toBe(expected);
+      }
+    }
+  });
 });

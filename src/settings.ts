@@ -23,11 +23,9 @@ export interface CanvasMdSideEditorSettings {
   // Markdown file cards show a heading outline or their selected headline.
   // Block targets keep native presentation; affected notes edit in the panel.
   headlineMode?: boolean;
-  // Title size in headline mode, scaling with the card's shorter side
-  // (multiplier on CSS `cqmin`, so both card axes are respected). Bigger
-  // number → bigger text. Clamped to a sane min/max so very small / very
-  // large cards still look reasonable. Badge, category and subtitle use the
-  // same scale: equal values render at equal size.
+  // Headline font sizes in CSS pixels, independent of card dimensions.
+  // H1 and selected headings use the title size; lower outline levels
+  // scale down. Equal values render at equal size across text tiers.
   headlineH1Size?: number;
   headlineBadgeSize?: number;
   headlineCategorySize?: number;

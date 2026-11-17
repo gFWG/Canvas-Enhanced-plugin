@@ -24,6 +24,8 @@ Headline mode applies to Markdown **file cards** only; standalone text cards kee
 
 **Narrow to heading** presents the selected heading at any level as the main headline, with the first Note in that section supplying metadata and subtitle. **Narrow to block** keeps Obsidian's normal block display. Markdown file cards, including narrowed blocks, are edited through the side panel in either mode. The panel edits the whole file.
 
+Headline font sizes stay unchanged when you resize a card, matching native Canvas behavior. The four size sliders set pixel sizes for the title, badge, category, and subtitle; lower outline headings retain their relative sizes. Canvas zoom still scales the whole card visually. Existing slider values are now interpreted as pixels, so you may need to adjust them once for your preferred appearance.
+
 <img width="890" height="663" alt="image" src="https://github.com/user-attachments/assets/62c85f9f-3942-43b5-924a-3f8d8517472d" />
 
 <img width="894" height="247" alt="image" src="https://github.com/user-attachments/assets/ee7b96c2-2740-4d55-b884-038892f872f0" />

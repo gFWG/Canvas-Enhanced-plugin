@@ -162,8 +162,8 @@ If your plugin does not need CSS, delete this file.
   display: none !important;
 }
 
-/* The node has explicit Canvas dimensions, making it a safe size container.
-   The shorter side controls title size even when Canvas zoom transforms it. */
+/* Use card dimensions for spacing and clipping; font sizes stay fixed
+   when the card is resized, like native Canvas text. */
 .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) {
   container-type: size;
 }
@@ -200,13 +200,12 @@ If your plugin does not need CSS, delete this file.
 }
 
 /* Metadata row: blue rounded identifier badge + muted blue-gray category.
-   Badge and category sizes are independent settings on the headline scale
-   (value × 0.6cqmin of the card's shorter side). */
+   Badge and category sizes are independent pixel settings. */
 .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-hl-meta {
   display: flex !important;
   align-items: center !important;
   flex-wrap: wrap;
-  font-size: calc(var(--cmside-badge-size, 16) * 0.6cqmin);
+  font-size: var(--cmside-badge-size, 16px);
   gap: 1.15em;
   min-height: 0;
   max-width: 100%;
@@ -218,7 +217,7 @@ If your plugin does not need CSS, delete this file.
   color: var(--text-on-accent);
   border-radius: 999px;
   padding: 0.12em 0.65em;
-  font-size: calc(var(--cmside-badge-size, 16) * 0.6cqmin) !important;
+  font-size: var(--cmside-badge-size, 16px) !important;
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -226,7 +225,7 @@ If your plugin does not need CSS, delete this file.
 
 .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-hl-category {
   color: var(--text-muted);
-  font-size: calc(var(--cmside-category-size, 18) * 0.6cqmin) !important;
+  font-size: var(--cmside-category-size, 18px) !important;
   font-weight: 500;
   overflow-wrap: anywhere;
 }
@@ -239,7 +238,7 @@ If your plugin does not need CSS, delete this file.
 
 .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-title {
   position: relative !important;
-  font-size: calc(var(--cmside-h1-size, 25) * 0.6cqmin) !important;
+  font-size: var(--cmside-h1-size, 25px) !important;
   font-weight: 700 !important;
   text-align: left !important;
   margin: 0 !important;
@@ -277,7 +276,7 @@ If your plugin does not need CSS, delete this file.
 
 /* The selected Note becomes the subtitle: the callout chrome (title, icon,
    background, border) is removed and its body renders as muted gray text.
-   Font size is an independent setting on the headline scale.
+   Font size is an independent pixel setting.
    Nested callouts inside the body keep the theme's native UI. */
 .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .cmside-headline-note {
   width: 100%;
@@ -293,7 +292,7 @@ If your plugin does not need CSS, delete this file.
   border: none !important;
   box-shadow: none !important;
   text-align: left;
-  font-size: calc(var(--cmside-subtitle-size, 11) * 0.6cqmin) !important;
+  font-size: var(--cmside-subtitle-size, 11px) !important;
   line-height: 1.5;
   color: var(--text-muted);
   overflow-wrap: anywhere;
@@ -348,7 +347,7 @@ If your plugin does not need CSS, delete this file.
 
 /* Obsidian replaces rendered Markdown with a filename at deep zoom-out. */
 .canvas-node.cmside-headline-card:not(.is-editing):not(.editing) .canvas-node-placeholder {
-  font-size: calc(var(--cmside-h1-size, 25) * 0.6cqmin) !important;
+  font-size: var(--cmside-h1-size, 25px) !important;
   font-weight: 700 !important;
   line-height: 1.25 !important;
   color: var(--text-normal) !important;
@@ -360,7 +359,7 @@ If your plugin does not need CSS, delete this file.
   content: "No headline";
   color: var(--text-faint);
   font-style: italic;
-  font-size: clamp(12px, calc(var(--cmside-h1-size, 25) * 0.3cqmin), 80px);
+  font-size: clamp(12px, calc(var(--cmside-h1-size, 25px) * 0.5), 80px);
   opacity: 0.7;
 }
 
@@ -412,11 +411,11 @@ If your plugin does not need CSS, delete this file.
   overflow: visible !important;
   -webkit-line-clamp: unset !important;
 }
-.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h2.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.50cqmin) !important; }
-.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h3.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.44cqmin) !important; }
-.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h4.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.40cqmin) !important; }
-.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h5.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.36cqmin) !important; }
-.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h6.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25) * 0.32cqmin) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h2.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25px) * 5 / 6) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h3.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25px) * 11 / 15) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h4.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25px) * 2 / 3) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h5.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25px) * 3 / 5) !important; }
+.canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) h6.cmside-headline-title { font-size: calc(var(--cmside-h1-size, 25px) * 8 / 15) !important; }
 .canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) :is(h2, h3, h4, h5, h6).cmside-headline-title::before { display: none; }
 .canvas-node.cmside-headline-card.cmside-headline-outline:not(.is-editing):not(.editing) .cmside-headline-note {
   flex: none;

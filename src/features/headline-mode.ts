@@ -446,7 +446,7 @@ export function applyHeadlineMode(settings: CanvasMdSideEditorSettings, doc: Doc
   ] as const;
   for (const [variable, key, fallback] of sizes) {
     const { min, max } = HEADLINE_SIZE_LIMITS[key];
-    doc.body.style.setProperty(variable, String(clampHeadlineSize(settings[key], DEFAULT_SETTINGS[key] ?? fallback, min, max)));
+    doc.body.style.setProperty(variable, `${clampHeadlineSize(settings[key], DEFAULT_SETTINGS[key] ?? fallback, min, max)}px`);
   }
 }
 

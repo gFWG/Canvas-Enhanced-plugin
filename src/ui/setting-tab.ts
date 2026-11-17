@@ -145,10 +145,10 @@ export class CanvasMdSideEditorSettingTab extends PluginSettingTab {
         });
       });
 
-    addHeadlineSizeSlider('Headline title size', 'Size of H1 and selected headlines (lower outline levels scale down), relative to the card\'s shorter side. Default 25 is the middle of the range.', 'headlineH1Size');
-    addHeadlineSizeSlider('Headline badge size', 'Size of the identifier badge (e.g. P01) on the same scale as the headline. Default 16 is the middle of the range.', 'headlineBadgeSize');
-    addHeadlineSizeSlider('Headline category size', 'Size of the category label next to the badge, on the same scale as the headline. Default 18 is the middle of the range.', 'headlineCategorySize');
-    addHeadlineSizeSlider('Headline subtitle size', 'Size of the subtitle (the [!note] callout body), on the same scale as the headline. Default 11 is the middle of the range.', 'headlineSubtitleSize');
+    addHeadlineSizeSlider('Headline title size', 'Font size in pixels for H1 and selected headlines (lower outline levels scale down). Resizing a card keeps the font size unchanged. Default 25.', 'headlineH1Size');
+    addHeadlineSizeSlider('Headline badge size', 'Font size in pixels for the identifier badge (e.g. P01). Default 16.', 'headlineBadgeSize');
+    addHeadlineSizeSlider('Headline category size', 'Font size in pixels for the category label next to the badge. Default 18.', 'headlineCategorySize');
+    addHeadlineSizeSlider('Headline subtitle size', 'Font size in pixels for the subtitle (the [!note] callout body). Default 11.', 'headlineSubtitleSize');
     syncHeadlineSizesEnabled(!!this.plugin.settings.headlineMode);
 
     containerEl.createEl('h3', { text: 'Typography' });
