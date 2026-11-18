@@ -43,8 +43,9 @@ const cards = new Map<HTMLElement, CardState>();
 const clipObservers = new Map<HTMLElement, { observer: ResizeObserver | null; win: Window; frame: number }>();
 
 function isHTMLElement(element: Element | null): element is HTMLElement {
-  const constructor = element?.ownerDocument.defaultView?.HTMLElement;
-  return !!element && !!constructor && element instanceof constructor;
+  // A node adopted into another window retains its original prototype.
+  // Its namespace remains stable even when ownerDocument changes.
+  return !!element && element.namespaceURI === 'http://www.w3.org/1999/xhtml';
 }
 
 export function parseNoteTitle(rawTitle: string, calloutType = 'note'): { identifier: string; category: string } {

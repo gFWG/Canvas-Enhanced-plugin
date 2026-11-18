@@ -1,7 +1,7 @@
 {
 	"id": "canvas-enhanced-plugin",
 	"name": "Canvas Enhanced plugin",
-	"version": "v1.2",
+	"version": "1.2.1",
 	"minAppVersion": "1.5.7",
 	"description": "Edit Canvas Markdown file cards in a side panel and show their headings as an outline.",
 	"author": "gFWG",

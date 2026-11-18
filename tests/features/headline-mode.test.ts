@@ -230,6 +230,22 @@ describe('headline content', () => {
     expect(getComputedStyle(node.querySelector('#body')!).display).not.toBe('none');
   });
 
+  it('keeps headline rendering after a card moves into another window', () => {
+    const node = card('<h1>Moved heading</h1><h2>Section</h2>');
+    const otherWindow = new Window();
+    const doc = otherWindow.document as unknown as Document;
+    doc.body.appendChild(node);
+    // Adopted nodes retain their original realm in browsers. happy-dom shares
+    // constructors across windows, so make the destination constructor distinct.
+    Object.defineProperty(otherWindow, 'HTMLElement', { configurable: true, value: class OtherHTMLElement {} });
+    outline(node);
+    expect(node.querySelector('.cmside-headline-title')?.textContent).toBe('Moved heading');
+    expect((node.querySelector('h1') as HTMLElement).style.order).toBe('1');
+    clearHeadlineCard(node);
+    expect(node.classList.contains('cmside-headline-card')).toBe(false);
+    void otherWindow.happyDOM.close();
+  });
+
   it('decorates and clears cards belonging to another document', () => {
     const otherWindow = new Window();
     const doc = otherWindow.document as unknown as Document;

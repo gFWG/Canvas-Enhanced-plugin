@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Window } from 'happy-dom';
 import { App, __notices } from '../__mocks__/obsidian';
 import { DEFAULT_SETTINGS } from '../../src/settings';
 import type { CanvasLikeView, CanvasNode } from '../../src/types';
@@ -119,6 +120,26 @@ describe('HeadlineController', () => {
     expect(clearHeadlineCard).toHaveBeenCalledWith(note.nodeEl);
     note.startEditing();
     expect(openNode).toHaveBeenCalledTimes(2);
+  });
+
+  it('continues rendering and routes editing when an existing Canvas moves to another window', async () => {
+    const note = node({ id: 'moved', type: 'file', file: 'moved.md' });
+    const { view } = canvasView([note]);
+    controller.update([view]);
+    await flush();
+    const second = new Window();
+    second.document.body.appendChild(view.containerEl as any);
+    vi.mocked(refreshHeadlineCard).mockClear();
+    controller.update([view]);
+    await new Promise(resolve => second.setTimeout(resolve, 10));
+
+    expect(refreshHeadlineCard).toHaveBeenCalledWith(note.nodeEl, { kind: 'outline' });
+    note.startEditing();
+    expect(openNode).toHaveBeenCalledWith(view, note.data);
+    expect(note.isEditing).toBe(false);
+    controller.dispose();
+    expect(note.startEditing()).toBe('native');
+    await second.happyDOM.close();
   });
 
   it('guards new nodes before the native add operation and removes guards on deletion', async () => {

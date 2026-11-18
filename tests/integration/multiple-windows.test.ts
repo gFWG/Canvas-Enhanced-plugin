@@ -23,11 +23,44 @@ function makeCanvas(doc: Document, file: string) {
   };
   const view = { containerEl: container, contentEl: container, canvas, getViewType: () => 'canvas' } as unknown as CanvasLikeView;
   const root = {};
-  const leaf = { view, getRoot: () => root, isDeferred: false };
+  const leaf = { view, getContainer: () => root, isDeferred: false };
   return { container, node, view, leaf, root };
 }
 
 describe('multiple workspace windows', () => {
+  it('attaches newly inserted leaves to their own pop-outs before a layout change', async () => {
+    const first = new Window();
+    const second = new Window();
+    const one = makeCanvas(first.document as unknown as Document, 'one.md');
+    const two = makeCanvas(second.document as unknown as Document, 'two.md');
+    const leaves = [one.leaf];
+    const nativeEdit = two.node.startEditing;
+    // All pop-outs share a floating root, but each has its own container.
+    const floatingRoot = {};
+    for (const leaf of [one.leaf, two.leaf]) Object.assign(leaf, { getRoot: () => floatingRoot });
+    const app = new App();
+    const workspace = app.workspace as any;
+    workspace.getLeavesOfType = () => leaves;
+    workspace.getMostRecentLeaf = (root: object) => root === floatingRoot ? leaves.at(-1)
+      : leaves.find(leaf => leaf.getContainer() === root);
+    const plugin = new CanvasMdSideEditorPlugin(app, { id: 'test', version: '0' } as any);
+    try {
+      await plugin.onload();
+      workspace.__emit('window-open', {}, second);
+      leaves.push(two.leaf);
+      await Promise.resolve();
+      await (plugin as any).canvasWork;
+      const editors = (plugin as any).windows;
+      expect(editors.get(one.container.ownerDocument)?.session.boundView).toBe(one.view);
+      expect(editors.get(two.container.ownerDocument)?.session.boundView).toBe(two.view);
+      expect(two.node.startEditing).not.toBe(nativeEdit);
+    } finally {
+      plugin.onunload();
+      await first.happyDOM.abort();
+      await second.happyDOM.abort();
+    }
+  });
+
   it('keeps edits and panels independent through focus, layout and pop-out closure', async () => {
     const popout = new Window();
     // Obsidian installs its element helpers in each window.
@@ -53,7 +86,7 @@ describe('multiple workspace windows', () => {
     const workspace = app.workspace as any;
     let leaves = [main.leaf, second.leaf];
     workspace.getLeavesOfType = () => leaves;
-    workspace.getMostRecentLeaf = (root: object) => leaves.find(leaf => leaf.getRoot() === root);
+    workspace.getMostRecentLeaf = (root: object) => leaves.find(leaf => leaf.getContainer() === root);
     workspace.setActiveLeaf = (leaf: typeof main.leaf) => {
       workspace.activeLeaf = leaf;
       workspace.__emit('active-leaf-change', leaf);

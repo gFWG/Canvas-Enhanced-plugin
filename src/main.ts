@@ -12,7 +12,7 @@
    features/*                orthogonal features (card title, paste, headline)
    ui/*                      panel, preview, settings tab
 */
-import { Plugin, type WorkspaceParent } from 'obsidian';
+import { Plugin } from 'obsidian';
 import { CanvasMdSideEditorSettings, DEFAULT_SETTINGS, migrateLegacyFontSizes } from './settings';
 import { migrateLegacyReadOnly, nextViewMode, type ViewMode } from './view-mode';
 import type { CanvasNode, CanvasLikeView } from './types';
@@ -77,7 +77,10 @@ export default class CanvasMdSideEditorPlugin extends Plugin {
     const ref2 = this.app.workspace.on('layout-change', refreshAttachment);
     this.registerEvent(ref1);
     this.registerEvent(ref2);
-    this.registerEvent(this.app.workspace.on('window-open', refreshAttachment));
+    // Obsidian emits window-open while constructing the pop-out, before
+    // inserting the new or moved leaf into its workspace container.
+    this.registerEvent(this.app.workspace.on('window-open', () => queueMicrotask(refreshAttachment)));
+    this.registerEvent(this.app.workspace.on('file-open', refreshAttachment));
     this.registerEvent(this.app.workspace.on('window-close', (_workspaceWindow, win) => {
       this.closedWindows.add(win.document);
       this.windows.get(win.document)?.dispose();
@@ -129,7 +132,7 @@ export default class CanvasMdSideEditorPlugin extends Plugin {
       const doc = leaf.view.containerEl.ownerDocument;
       if (selected.has(doc) || this.closedWindows.has(doc)) continue;
       const recent = active?.view?.containerEl?.ownerDocument === doc
-        ? active : workspace.getMostRecentLeaf?.(leaf.getRoot() as WorkspaceParent) ?? leaf;
+        ? active : workspace.getMostRecentLeaf?.(leaf.getContainer()) ?? leaf;
       selected.set(doc, !recent.isDeferred && isCanvasView(recent.view)
         ? recent.view as unknown as CanvasLikeView : null);
     }
