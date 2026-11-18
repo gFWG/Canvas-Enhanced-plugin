@@ -19,7 +19,7 @@ function setup() {
   const session = new EditorSession({ app, plugin, getSettings: () => settings, persistSettings: vi.fn() });
   session.boundView = view;
   sessions.push(session);
-  return { app, session, view };
+  return { app, session, view, settings };
 }
 const note = (id: string): CanvasNode => ({ id, type: 'file', file: `${id}.md` });
 const edit = (session: EditorSession, text: string) => session.cmView!.dispatch({ changes: { from: 0, to: session.cmView!.state.doc.length, insert: text } });
@@ -91,6 +91,43 @@ describe('source editor persistence', () => {
     wait.resume();
     await Promise.all([first, second]);
     expect(await app.vault.read(new TFile('a.md'))).toBe('Second edit');
+  });
+});
+
+describe('view mode coordination', () => {
+  it('delegates the toolbar cycle to the shared coordinator', () => {
+    const app = new App();
+    const plugin = new Plugin(app, { id: 'session', version: '1' } as any);
+    const onCycleViewMode = vi.fn();
+    const persistSettings = vi.fn();
+    const settings = { ...DEFAULT_SETTINGS };
+    const session = new EditorSession({ app, plugin, getSettings: () => settings, persistSettings, onCycleViewMode });
+    sessions.push(session);
+    session.cycleViewMode();
+    expect(onCycleViewMode).toHaveBeenCalledOnce();
+    expect(persistSettings).not.toHaveBeenCalled();
+  });
+
+  it('keeps a closed file panel closed when another window selects Live Preview', async () => {
+    const { session, view, settings } = setup();
+    await session.open(view, note('a'));
+    await session.saveAndClose(view);
+    Object.assign(settings, { viewMode: 'live' });
+    await session.applyViewMode('live', 'editor');
+    expect(session.openNodeId).toBeNull();
+    expect(session.panel?.classList.contains('open')).toBe(false);
+  });
+
+  it('applies a shared mode without refocusing an editor in a background window', async () => {
+    const { session, view, settings } = setup();
+    await session.open(view, note('a'));
+    Object.assign(settings, { viewMode: 'live' });
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const reopen = vi.spyOn(session, 'open').mockResolvedValue();
+
+    await session.applyViewMode('live', 'editor');
+
+    expect(reopen).toHaveBeenCalledWith(view, expect.objectContaining({ id: 'a' }), false);
   });
 });
 

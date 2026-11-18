@@ -40,9 +40,7 @@ interface CardState {
 }
 
 const cards = new Map<HTMLElement, CardState>();
-let clipObserver: ResizeObserver | null = null;
-let clipFrame = 0;
-let clipWindow: Window | null = null;
+const clipObservers = new Map<HTMLElement, { observer: ResizeObserver | null; win: Window; frame: number }>();
 
 function isHTMLElement(element: Element | null): element is HTMLElement {
   const constructor = element?.ownerDocument.defaultView?.HTMLElement;
@@ -360,7 +358,7 @@ export function refreshHeadlineCard(card: HTMLElement, context: HeadlineCardCont
   previousPreview?.remove();
   if (context.kind === 'heading') observeSubtitle(card);
   else {
-    clipObserver?.unobserve(card);
+    stopObservingSubtitle(card);
     for (const element of Array.from(card.querySelectorAll(`.${CLIPPED_CLASS}`))) element.classList.remove(CLIPPED_CLASS);
     for (const note of Array.from(card.querySelectorAll(`.${NOTE_CLASS}`))) {
       if (isHTMLElement(note)) note.style.removeProperty(SUBTITLE_LINES_VAR);
@@ -374,7 +372,7 @@ export function clearHeadlineCard(card: HTMLElement): void {
   if (!state) return;
   const preview = state.preview;
   state.preview = null;
-  clipObserver?.unobserve(card);
+  stopObservingSubtitle(card);
   for (const [element, names] of state.marks) element.classList.remove(...names);
   for (const row of state.rows.values()) row.remove();
   for (const [element, previous] of state.orders) restoreOrder(element, previous);
@@ -409,27 +407,37 @@ export function syncSubtitleEllipsis(note: HTMLElement): void {
 }
 
 function observeSubtitle(card: HTMLElement): void {
-  if (!clipObserver && typeof ResizeObserver !== 'undefined') {
-    clipObserver = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        const note = entry.target.querySelector(`.${NOTE_CLASS}`);
-        if (isHTMLElement(note)) syncSubtitleEllipsis(note);
-      }
-    });
+  const win = card.ownerDocument.defaultView;
+  if (!win) return;
+  let state = clipObservers.get(card);
+  if (state && state.win !== win) {
+    stopObservingSubtitle(card);
+    state = undefined;
   }
-  clipObserver?.observe(card);
-  if (clipFrame) clipWindow?.cancelAnimationFrame(clipFrame);
-  clipWindow = card.ownerDocument.defaultView;
-  if (clipWindow) {
-    clipFrame = clipWindow.requestAnimationFrame(() => {
-      clipFrame = 0;
-      for (const target of cards.keys()) {
-        if (!target.classList.contains('cmside-headline-heading')) continue;
-        const note = target.querySelector(`.${NOTE_CLASS}`);
-        if (isHTMLElement(note)) syncSubtitleEllipsis(note);
-      }
-    });
+  const update = () => {
+    const note = card.querySelector(`.${NOTE_CLASS}`);
+    if (isHTMLElement(note)) syncSubtitleEllipsis(note);
+  };
+  if (!state) {
+    const observer = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(update) : null;
+    state = { observer, win, frame: 0 };
+    clipObservers.set(card, state);
+    observer?.observe(card);
   }
+  if (state.frame) win.cancelAnimationFrame(state.frame);
+  const currentState = state;
+  state.frame = win.requestAnimationFrame(() => {
+    currentState.frame = 0;
+    update();
+  });
+}
+
+function stopObservingSubtitle(card: HTMLElement): void {
+  const state = clipObservers.get(card);
+  if (!state) return;
+  state.observer?.disconnect();
+  if (state.frame) state.win.cancelAnimationFrame(state.frame);
+  clipObservers.delete(card);
 }
 
 export function applyHeadlineMode(settings: CanvasMdSideEditorSettings, doc: Document = document): void {
@@ -453,13 +461,6 @@ export function applyHeadlineMode(settings: CanvasMdSideEditorSettings, doc: Doc
 export function removeHeadlineMode(doc: Document = document): void {
   for (const card of Array.from(cards.keys())) if (card.ownerDocument === doc) clearHeadlineCard(card);
   doc.body.classList.remove(BODY_CLASS);
-  if (!cards.size) {
-    clipObserver?.disconnect();
-    clipObserver = null;
-    if (clipFrame) clipWindow?.cancelAnimationFrame(clipFrame);
-    clipFrame = 0;
-    clipWindow = null;
-  }
 }
 
 export function clampHeadlineSize(value: unknown, fallback: number, min: number, max: number): number {

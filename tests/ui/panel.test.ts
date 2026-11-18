@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { PanelController } from '../../src/ui/panel';
 import { DEFAULT_SETTINGS, type CanvasMdSideEditorSettings } from '../../src/settings';
 
@@ -92,6 +93,31 @@ describe('PanelController setViewMode', () => {
     const refs = controller.create();
     controller.setViewMode('live');
     expect(refs.panelEl.getAttribute('data-view-mode')).toBe('live');
+  });
+
+  it('hides the duplicate Live Preview filename only in the side panel', () => {
+    const { controller } = setup({ viewMode: 'live' });
+    const { panelEl, editorRootEl } = controller.create();
+    controller.setTitle('Example');
+    const markdown = '<div class="cm-sizer"><div class="inline-title">Example</div><h1>First heading</h1></div>';
+    editorRootEl.innerHTML = markdown;
+    const standaloneEditor = document.body.createDiv();
+    standaloneEditor.innerHTML = markdown;
+    const style = document.createElement('style');
+    style.textContent = readFileSync('styles.css', 'utf8');
+    document.head.append(style);
+
+    try {
+      const toolbarTitle = panelEl.querySelector('.cmside-title')!;
+      expect(toolbarTitle.textContent).toBe('Example');
+      expect(getComputedStyle(toolbarTitle).display).not.toBe('none');
+      expect(getComputedStyle(editorRootEl.querySelector('.inline-title')!).display).toBe('none');
+      expect(getComputedStyle(editorRootEl.querySelector('h1')!).display).not.toBe('none');
+      expect(getComputedStyle(standaloneEditor.querySelector('.inline-title')!).display).not.toBe('none');
+    } finally {
+      style.remove();
+      controller.destroy();
+    }
   });
 
   it('writes data-view-mode="preview" and hides editor pane', () => {

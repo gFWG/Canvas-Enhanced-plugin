@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { keymap } from '@codemirror/view';
 import { undo } from '@codemirror/commands';
+import { Window as HappyWindow } from 'happy-dom';
 import { createEditor } from '../../src/editor/cm6-editor';
+import { Cm6EditorHost } from '../../src/editor/cm6-host';
 
 beforeEach(() => {
   document.body.innerHTML = '';
@@ -14,6 +16,17 @@ function makeParent(): HTMLElement {
 }
 
 describe('createEditor', () => {
+  it('uses the parent document when the editor is mounted in another window', () => {
+    const otherDocument = new HappyWindow().document as unknown as Document;
+    const parent = otherDocument.createElement('div');
+    otherDocument.body.appendChild(parent);
+    const view = createEditor(parent, 'other window');
+
+    expect(view.root).toBe(otherDocument);
+    expect(view.dom.ownerDocument).toBe(otherDocument);
+    view.destroy();
+  });
+
   it('initialises with the provided document text', () => {
     const view = createEditor(makeParent(), 'hello world');
     expect(view.state.doc.toString()).toBe('hello world');
@@ -32,6 +45,27 @@ describe('createEditor', () => {
     const view = createEditor(makeParent(), 'abc', onDocChange);
     view.dispatch({ selection: { anchor: 1 } });
     expect(onDocChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('Cm6EditorHost window migration', () => {
+  it('updates the editor root and unregisters its migration listener on disposal', async () => {
+    const parent = makeParent();
+    let migrate!: (win: Window) => void;
+    const unregister = vi.fn();
+    parent.onWindowMigrated = vi.fn((listener) => {
+      migrate = listener;
+      return unregister;
+    });
+    const host = new Cm6EditorHost();
+    host.open(parent, 'text', {});
+    const setRoot = vi.spyOn(host.view!, 'setRoot').mockImplementation(() => {});
+    const otherWindow = new HappyWindow() as unknown as Window;
+
+    migrate(otherWindow);
+    expect(setRoot).toHaveBeenCalledWith(otherWindow.document);
+    await host.dispose();
+    expect(unregister).toHaveBeenCalledOnce();
   });
 });
 

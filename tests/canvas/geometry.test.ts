@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { Window } from 'happy-dom';
 import { parseTransform, screenToCanvasPoint } from '../../src/canvas/geometry';
 import { findNodeIdAtPoint } from '../../src/canvas/hit-test';
 import type { CanvasLikeView } from '../../src/types';
@@ -28,6 +29,16 @@ beforeEach(() => {
 });
 
 describe('parseTransform', () => {
+  it('reads computed styles from the element’s own window', () => {
+    const frameWindow = new Window();
+    const element = frameWindow.document.createElement('div');
+    const getStyle = vi.spyOn(frameWindow, 'getComputedStyle').mockReturnValue({
+      transform: 'matrix(2, 0, 0, 2, 10, 20)',
+    } as CSSStyleDeclaration);
+    expect(parseTransform(element)).toEqual({ scale: 2, tx: 10, ty: 20 });
+    expect(getStyle).toHaveBeenCalledWith(element);
+    getStyle.mockRestore();
+  });
   it('returns identity for "none"', () => {
     const el = document.createElement('div');
     setTransform(el, 'none');

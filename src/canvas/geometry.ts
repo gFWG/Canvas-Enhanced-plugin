@@ -24,7 +24,7 @@ export function getTransformEl(view: CanvasLikeView): HTMLElement | null {
   }
   // Prefer a structural candidate that currently carries a transform.
   for (const el of found) {
-    const t = getComputedStyle(el).transform;
+    const t = (el.ownerDocument.defaultView ?? window).getComputedStyle(el).transform;
     if (t && t !== 'none') return el;
   }
   // None transformed → the canvas is at rest and identity math is correct.
@@ -35,7 +35,7 @@ export function getTransformEl(view: CanvasLikeView): HTMLElement | null {
 }
 
 export function parseTransform(el: HTMLElement): { scale: number; tx: number; ty: number } {
-  const cs = getComputedStyle(el);
+  const cs = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
   const t = cs.transform || 'none';
   if (!t || t === 'none') return { scale: 1, tx: 0, ty: 0 };
   const m = t.match(/matrix\(([^)]+)\)/);

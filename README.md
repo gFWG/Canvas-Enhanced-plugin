@@ -53,6 +53,8 @@ This heading appears in the full-file outline; this body text stays hidden.
 3. Single-click a Markdown file card or text card to select it. Scroll inside a selected card as needed.
 4. Double-click a Markdown file card to edit the whole file in the side panel, or double-click a text card to edit it inline. Click another card or the Canvas background to close the panel and save its changes.
 
+In Live Preview, the note name appears in the side-panel toolbar, and the editor starts with the Markdown content.
+
 ---
 
 ## Installation

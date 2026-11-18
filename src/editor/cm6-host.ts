@@ -23,6 +23,7 @@ export class Cm6EditorHost implements EditorHost {
   private scrollHandler: ((e: Event) => void) | null = null;
   private blankClickHandler: ((e: MouseEvent) => void) | null = null;
   private blankClickAttachedEl: HTMLElement | null = null;
+  private detachWindowMigration: (() => void) | null = null;
 
   get view(): EditorView | null {
     return this.cmView;
@@ -46,6 +47,11 @@ export class Cm6EditorHost implements EditorHost {
         hooks.onDocChange ? () => hooks.onDocChange?.() : undefined,
         hooks.onPasteImages,
       );
+      if (typeof rootEl.onWindowMigrated === 'function') {
+        this.detachWindowMigration = rootEl.onWindowMigrated((win) => {
+          this.cmView?.setRoot(win.document);
+        });
+      }
       rootEl.classList.add('markdown-source-view', 'cm-s-obsidian', 'mod-cm6');
       this.scrollHandler = () => { hooks.onScroll?.(); };
       this.cmView.scrollDOM.addEventListener('scroll', this.scrollHandler, { passive: true });
@@ -66,6 +72,8 @@ export class Cm6EditorHost implements EditorHost {
   }
 
   async dispose(): Promise<void> {
+    this.detachWindowMigration?.();
+    this.detachWindowMigration = null;
     if (this.cmView && this.scrollHandler) {
       try { this.cmView.scrollDOM.removeEventListener('scroll', this.scrollHandler); } catch {}
     }

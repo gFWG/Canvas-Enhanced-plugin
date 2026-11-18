@@ -12,28 +12,24 @@
    features/*                orthogonal features (card title, paste, headline)
    ui/*                      panel, preview, settings tab
 */
-import { Plugin } from 'obsidian';
+import { Plugin, type WorkspaceParent } from 'obsidian';
 import { CanvasMdSideEditorSettings, DEFAULT_SETTINGS, migrateLegacyFontSizes } from './settings';
-import { migrateLegacyReadOnly, type ViewMode } from './view-mode';
+import { migrateLegacyReadOnly, nextViewMode, type ViewMode } from './view-mode';
 import type { CanvasNode, CanvasLikeView } from './types';
 import { CanvasMdSideEditorSettingTab } from './ui/setting-tab';
 import { registerCommands } from './commands/register';
-import { EditorSession } from './core/editor-session';
-import { CanvasInteraction, getActiveCanvasView } from './canvas/interaction';
+import { WindowEditor } from './core/window-editor';
+import { isCanvasView } from './canvas/interaction';
 import { applyHeadlineMode as applyHeadlineModeStyles, removeHeadlineMode } from './features/headline-mode';
 import { HeadlineController } from './canvas/headline-controller';
 
 export default class CanvasMdSideEditorPlugin extends Plugin {
   public settings!: CanvasMdSideEditorSettings;
 
-  private session!: EditorSession;
-  private interaction!: CanvasInteraction;
+  private windows = new Map<Document, WindowEditor>();
   private headline!: HeadlineController;
+  private closedWindows = new WeakSet<Document>();
   private headlineDocuments = new Set<Document>();
-  private canvasWork: Promise<void> = Promise.resolve();
-  private pendingOpen: { view: CanvasLikeView; id: string; file?: string; mode: ViewMode; promise: Promise<void> } | null = null;
-  private lastOpened: { view: CanvasLikeView; id: string; file?: string; mode: ViewMode } | null = null;
-  private openRequest = 0;
   private unloaded = false;
 
   async onload() {
@@ -67,52 +63,9 @@ export default class CanvasMdSideEditorPlugin extends Plugin {
 
     this.addSettingTab(new CanvasMdSideEditorSettingTab(this.app, this));
 
-    // Core state machine + canvas event routing
-    this.session = new EditorSession({
-      app: this.app,
-      plugin: this,
-      getSettings: () => this.settings,
-      persistSettings: (s) => this.saveData(s),
-    });
-    this.interaction = new CanvasInteraction(this.app, {
-      getPanelEl: () => this.session.panel,
-      getOpenNodeId: () => this.session.openNodeId,
-      save: (view) => this.enqueueCanvasWork(async () => {
-        if (this.session.boundView === view) await this.session.save(view);
-      }),
-      saveAndClose: (view) => {
-        this.openRequest++;
-        return this.enqueueCanvasWork(async () => {
-          if (this.session.boundView === view) await this.session.saveAndClose(view);
-        });
-      },
-      openNode: (view, node) => this.openCanvasNode(view, node),
-      requestMarkdownEdit: (view, target) => this.headline.requestMarkdownEdit(view, target),
-      allowNativeEditing: (_view, target) => !!target.closest('.canvas-node'),
-    });
-
-    this.headline = new HeadlineController(this.app, () => this.settings, (view, node) => this.openCanvasNode(view, node));
-
-    // Serialize view changes with panel opens so saves use the owning Canvas.
-    const attach = () => this.enqueueCanvasWork(async () => {
-      this.applyHeadlineMode();
-      const view = getActiveCanvasView(this.app);
-      if (view) {
-        await this.attachToCanvas(view);
-      } else if (this.session.boundView) {
-        // Left the Canvas: persist any unsaved edits to the previous canvas,
-        // then drop panel state so a fresh one is built when we return.
-        const prev = this.session.boundView;
-        if (prev && !(await this.session.saveStable(prev))) return;
-        if (this.unloaded) return;
-        this.interaction.detach();
-        this.session.teardown();
-        this.session.boundView = null;
-      }
-    });
-    const refreshAttachment = () => {
-      void attach().catch(error => console.error('CanvasMdSideEditor: failed to attach Canvas', error));
-    };
+    this.headline = new HeadlineController(this.app, () => this.settings, (view, node) =>
+      this.windowEditor(view.containerEl.ownerDocument).openCanvasNode(view, node));
+    const refreshAttachment = () => this.refreshWindows();
     // Native views are not ready until Obsidian restores the workspace.
     this.app.workspace.onLayoutReady(refreshAttachment);
 
@@ -124,6 +77,13 @@ export default class CanvasMdSideEditorPlugin extends Plugin {
     const ref2 = this.app.workspace.on('layout-change', refreshAttachment);
     this.registerEvent(ref1);
     this.registerEvent(ref2);
+    this.registerEvent(this.app.workspace.on('window-open', refreshAttachment));
+    this.registerEvent(this.app.workspace.on('window-close', (_workspaceWindow, win) => {
+      this.closedWindows.add(win.document);
+      this.windows.get(win.document)?.dispose();
+      this.windows.delete(win.document);
+      this.applyHeadlineMode();
+    }));
     // Narrowed targets can resolve after their note's metadata becomes ready.
     if (this.app.metadataCache?.on) {
       this.registerEvent(this.app.metadataCache.on('changed', () => this.applyHeadlineMode()));
@@ -135,46 +95,59 @@ export default class CanvasMdSideEditorPlugin extends Plugin {
     // for any markdown view in the workspace; the session filters to the
     // file it currently has embedded.
     const refEdit = this.app.workspace.on('editor-change', (_editor, info) => {
-      this.session.handleWorkspaceEditorChange(info);
+      for (const editor of this.windows.values()) editor.session.handleWorkspaceEditorChange(info);
     });
     this.registerEvent(refEdit);
   }
 
   onunload() {
     this.unloaded = true;
-    this.openRequest++;
     this.headline?.dispose();
-    const finalSave = this.session?.boundView ? this.session.save(this.session.boundView) : undefined;
-    void finalSave?.catch(error => console.error('CanvasMdSideEditor: unload save failed', error));
     for (const doc of this.headlineDocuments) removeHeadlineMode(doc);
     this.headlineDocuments.clear();
-    this.session?.teardown(finalSave);
-    this.interaction?.detach();
+    for (const editor of this.windows.values()) editor.dispose();
+    this.windows.clear();
   }
 
-  // Attach the interaction layer to a canvas view. If the existing panel
-  // was attached to a destroyed/different container (e.g. user left and
-  // returned to a Canvas leaf that Obsidian rebuilt), save any pending
-  // edits to the previous canvas and drop the stale panel so the session
-  // can rebuild it under the new container. Fixes issue #8.
-  private async attachToCanvas(view: CanvasLikeView) {
-    if (this.unloaded) return;
-    if (this.session.boundView === view && (!this.session.panel || this.session.panel.parentElement === view.containerEl)) return;
-    const container: HTMLElement | undefined = view?.containerEl;
-    const panel = this.session.panel;
-    const stale = !!panel && (!panel.isConnected || (!!container && panel.parentElement !== container));
-    if (stale) {
-      const prev = this.session.boundView;
-      if (prev && prev !== view) {
-        if (!(await this.session.saveStable(prev))) return;
-      }
-      if (this.unloaded) return;
-      this.session.teardown();
+  private windowEditor(doc: Document): WindowEditor {
+    let editor = this.windows.get(doc);
+    if (!editor) {
+      editor = new WindowEditor(this, this.headline);
+      this.windows.set(doc, editor);
     }
+    return editor;
+  }
+
+  private refreshWindows(): void {
     if (this.unloaded) return;
-    this.interaction.detach();
-    this.session.boundView = view;
-    this.interaction.attach(view);
+    this.applyHeadlineMode();
+    const workspace = this.app.workspace;
+    const active = workspace.activeLeaf;
+    const selected = new Map<Document, CanvasLikeView | null>();
+    for (const leaf of workspace.getLeavesOfType?.('canvas') ?? []) {
+      if (leaf.isDeferred || !leaf.view?.containerEl) continue;
+      const doc = leaf.view.containerEl.ownerDocument;
+      if (selected.has(doc) || this.closedWindows.has(doc)) continue;
+      const recent = active?.view?.containerEl?.ownerDocument === doc
+        ? active : workspace.getMostRecentLeaf?.(leaf.getRoot() as WorkspaceParent) ?? leaf;
+      selected.set(doc, !recent.isDeferred && isCanvasView(recent.view)
+        ? recent.view as unknown as CanvasLikeView : null);
+    }
+    // A leaf can be moved intact. Transfer its editor with the DOM when
+    // possible, retaining the mounted buffer and pending saves.
+    for (const [doc, editor] of [...this.windows]) {
+      const destination = editor.session.boundView?.containerEl.ownerDocument;
+      if (destination && destination !== doc && !this.windows.get(destination)?.session.panel) {
+        this.windows.get(destination)?.dispose();
+        this.windows.delete(doc);
+        this.windows.set(destination, editor);
+      }
+    }
+    for (const doc of new Set([...this.windows.keys(), ...selected.keys()])) {
+      const editor = this.windowEditor(doc);
+      void editor.refresh(selected.get(doc) ?? null)
+        .catch(error => console.error('CanvasMdSideEditor: failed to attach Canvas', error));
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -183,7 +156,14 @@ export default class CanvasMdSideEditorPlugin extends Plugin {
   // ---------------------------------------------------------------------
 
   private async openEditorForNode(view: CanvasLikeView, node: CanvasNode): Promise<void> {
-    return this.openCanvasNode(view, node);
+    return this.windowEditor(view.containerEl.ownerDocument).openCanvasNode(view, node);
+  }
+
+  private get session() { return this.windows.get(document)?.session; }
+  private get interaction() { return this.windows.get(document)?.interaction; }
+  private get canvasWork() { return Promise.all([...this.windows.values()].map(editor => editor.canvasWork)); }
+  private attachToCanvas(view: CanvasLikeView) {
+    return this.windowEditor(view.containerEl.ownerDocument).attachToCanvas(view);
   }
 
   private get panelEl(): HTMLElement | null {
@@ -203,68 +183,37 @@ export default class CanvasMdSideEditorPlugin extends Plugin {
   // ---------------------------------------------------------------------
 
   public cycleViewMode(): void {
-    this.session.cycleViewMode();
+    void this.setViewMode(nextViewMode(this.settings.viewMode));
   }
 
   public async setViewMode(mode: ViewMode): Promise<void> {
-    await this.session.setViewMode(mode);
+    const previous = this.settings.viewMode;
+    this.settings.viewMode = mode;
+    try { await this.saveData(this.settings); } catch {}
+    await Promise.all([...this.windows.values()].map(editor => editor.session.applyViewMode(mode, previous)));
   }
 
   public applyFontSizes(): void {
-    this.session.applyFontSizes();
+    for (const editor of this.windows.values()) editor.session.applyFontSizes();
   }
 
   public applyDockPosition(): void {
-    this.session.applyDockPosition();
+    for (const editor of this.windows.values()) editor.session.applyDockPosition();
   }
 
   public refreshCardTitle(): void {
-    this.session.refreshCardTitle();
+    for (const editor of this.windows.values()) editor.session.refreshCardTitle();
   }
 
   public applyHeadlineMode(): void {
     if (this.unloaded) return;
     const views = (this.app.workspace.getLeavesOfType?.('canvas') ?? [])
-      .filter(leaf => !leaf.isDeferred && leaf.view?.containerEl)
+      .filter(leaf => !leaf.isDeferred && leaf.view?.containerEl && !this.closedWindows.has(leaf.view.containerEl.ownerDocument))
       .map(leaf => leaf.view as unknown as CanvasLikeView);
     const documents = new Set([document, ...views.map(view => view.containerEl.ownerDocument)]);
     for (const doc of this.headlineDocuments) if (!documents.has(doc)) removeHeadlineMode(doc);
     for (const doc of documents) applyHeadlineModeStyles(this.settings, doc);
     this.headlineDocuments = documents;
     this.headline?.update(views);
-  }
-
-  private enqueueCanvasWork(work: () => Promise<void>): Promise<void> {
-    const next = this.canvasWork.then(async () => { if (!this.unloaded) await work(); });
-    this.canvasWork = next.catch(() => {});
-    return next;
-  }
-
-  private openCanvasNode(view: CanvasLikeView, node: CanvasNode): Promise<void> {
-    const pending = this.pendingOpen;
-    if (pending?.view === view && pending.id === node.id && pending.file === node.file && pending.mode === this.settings.viewMode) return pending.promise;
-    const request = ++this.openRequest;
-    const mode = this.settings.viewMode;
-    const promise = this.enqueueCanvasWork(async () => {
-      if (request !== this.openRequest) return;
-      if (this.session.boundView === view && this.session.openNodeId === node.id
-        && this.lastOpened?.file === node.file && this.lastOpened?.mode === this.settings.viewMode && this.session.panel?.classList.contains('open')) return;
-      const previous = this.session.boundView;
-      if (previous === view) await this.session.save(previous);
-      if (!(await this.headline.waitForNativeSave(view, node))) return;
-      if (request !== this.openRequest || this.unloaded) return;
-      await this.attachToCanvas(view);
-      if (request !== this.openRequest || this.unloaded || this.session.boundView !== view) return;
-      if (!(await this.headline.waitForNativeSave(view, node))) return;
-      if (request !== this.openRequest || this.unloaded) return;
-      const leaf = this.app.workspace.getLeavesOfType?.('canvas').find(candidate => candidate.view === view as unknown);
-      if (leaf && this.app.workspace.activeLeaf !== leaf) this.app.workspace.setActiveLeaf(leaf, { focus: true });
-      if (request !== this.openRequest || this.unloaded) return;
-      await this.session.open(view, node);
-      this.lastOpened = { view, id: node.id, file: node.file, mode };
-    });
-    this.pendingOpen = { view, id: node.id, file: node.file, mode, promise };
-    void promise.finally(() => { if (this.pendingOpen?.promise === promise) this.pendingOpen = null; }).catch(() => {});
-    return promise;
   }
 }

@@ -48,6 +48,7 @@ export interface EditorSessionDeps {
   plugin: Plugin;
   getSettings: () => CanvasMdSideEditorSettings;
   persistSettings: (s: CanvasMdSideEditorSettings) => Promise<void> | void;
+  onCycleViewMode?: () => void;
 }
 
 export class EditorSession {
@@ -55,6 +56,7 @@ export class EditorSession {
   private plugin: Plugin;
   private getSettings: () => CanvasMdSideEditorSettings;
   private persistSettings: (s: CanvasMdSideEditorSettings) => Promise<void> | void;
+  private onCycleViewMode?: () => void;
 
   // Panel
   private panelController: PanelController | null = null;
@@ -108,6 +110,7 @@ export class EditorSession {
     this.plugin = deps.plugin;
     this.getSettings = deps.getSettings;
     this.persistSettings = deps.persistSettings;
+    this.onCycleViewMode = deps.onCycleViewMode;
   }
 
   // ---------------------------------------------------------------------
@@ -182,7 +185,9 @@ export class EditorSession {
       this.panelController.onClose(() => { void this.saveAndClose(view).catch(() => {}); });
       this.applyToolbarIcon = applyIcon; // expose for setViewMode to repaint
       this.sideEditorScope = new SideEditorScope(this.app, () => this.cm6Host.view);
-      this.sideEditorScope.install();
+      // Only the focused panel should participate in the shared app keymap.
+      this.panelEl.addEventListener('focusin', () => this.sideEditorScope?.install());
+      this.panelEl.addEventListener('focusout', () => this.sideEditorScope?.uninstall());
       return;
     }
   }
@@ -324,7 +329,7 @@ export class EditorSession {
     }
   }
 
-  async open(view: CanvasLikeView, node: CanvasNode): Promise<void> {
+  async open(view: CanvasLikeView, node: CanvasNode, focus = true): Promise<void> {
     // Stake out a unique generation for this invocation. Concurrent
     // rapid clicks bump the counter; if our gen is no longer current
     // after any await, we must bail before applying side effects.
@@ -448,7 +453,7 @@ export class EditorSession {
     // Slide in
     this.panelEl.classList.add('open');
     // Focus editor for immediate typing (skip in preview-only view mode)
-    if (this.getSettings().viewMode !== 'preview') {
+    if (focus && this.getSettings().viewMode !== 'preview') {
       try {
         if (this.usingLeafHost) {
           this.leafHost?.focus();
@@ -499,6 +504,10 @@ export class EditorSession {
 
   // Cycle Editor → Live → Preview → Editor (issue #16, #20).
   cycleViewMode(): void {
+    if (this.onCycleViewMode) {
+      this.onCycleViewMode();
+      return;
+    }
     void this.setViewMode(nextViewMode(this.getSettings().viewMode));
   }
 
@@ -510,8 +519,15 @@ export class EditorSession {
     const prevMode = settings.viewMode;
     settings.viewMode = mode;
     try { await this.persistSettings(settings); } catch {}
+    await this.applyViewMode(mode, prevMode);
+  }
+
+  async applyViewMode(mode: ViewMode, prevMode: ViewMode): Promise<void> {
     try { this.panelController?.setViewMode?.(mode); } catch {}
     try { this.applyToolbarIcon?.(mode); } catch {}
+
+    if (!this.currentNodeId) return;
+    const generation = this.openGeneration;
 
     // Transitions that change the active editor primitive — CM6 ↔
     // detached MarkdownLeaf (Live Preview) — need a full re-open so the
@@ -532,8 +548,11 @@ export class EditorSession {
         // detach and the next read sees stale disk data.
         if (isLeavingLive) {
           try { await this.leafHost?.flush(); } catch {}
+          if (generation !== this.openGeneration || this.getSettings().viewMode !== mode) return;
         }
-        await this.open(this.boundView, this.currentNode);
+        const doc = this.panelEl?.ownerDocument;
+        const focus = !!doc && doc.hasFocus() && !!doc.activeElement && !!this.panelEl?.contains(doc.activeElement);
+        await this.open(this.boundView, this.currentNode, focus);
         return;
       }
     }

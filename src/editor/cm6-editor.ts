@@ -49,6 +49,6 @@ export function createEditor(
     );
   }
   const state = EditorState.create({ doc: initialDoc, extensions });
-  const view = new EditorView({ state, parent });
+  const view = new EditorView({ state, parent, root: parent.ownerDocument });
   return view;
 }

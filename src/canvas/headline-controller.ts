@@ -26,6 +26,7 @@ type ViewState = {
   canvas: RuntimeCanvas;
   nodes: Map<RuntimeNode, () => void>;
   unpatch: Array<() => void>;
+  win: Window;
   observer: MutationObserver;
   timer: number | null;
   active: boolean;
@@ -91,7 +92,7 @@ export class HeadlineController {
   update(views: CanvasLikeView[]): void {
     const wanted = new Set(views);
     for (const [view, state] of this.states) {
-      if (!wanted.has(view) || view.canvas !== state.canvas) this.removeView(state);
+      if (!wanted.has(view) || view.canvas !== state.canvas || view.containerEl.ownerDocument.defaultView !== state.win) this.removeView(state);
     }
     for (const view of wanted) {
       if (!this.states.has(view)) this.addView(view);
@@ -156,11 +157,12 @@ export class HeadlineController {
       this.warn(view);
       return;
     }
-    const observer = new MutationObserver(() => {
+    const win = view.containerEl.ownerDocument.defaultView ?? window;
+    const observer = new win.MutationObserver(() => {
       const state = this.states.get(view);
       if (state) this.schedule(state);
     });
-    const state: ViewState = { view, canvas, nodes: new Map(), unpatch: [], observer, timer: null, active: true };
+    const state: ViewState = { view, canvas, win, nodes: new Map(), unpatch: [], observer, timer: null, active: true };
     this.states.set(view, state);
 
     const add = wrapMethod(canvas, 'addNode', (next, receiver, args) => {
@@ -279,7 +281,7 @@ export class HeadlineController {
     if (!state.active) return;
     state.active = false;
     state.observer.disconnect();
-    if (state.timer !== null) (state.view.containerEl.ownerDocument.defaultView ?? window).clearTimeout(state.timer);
+    if (state.timer !== null) state.win.clearTimeout(state.timer);
     state.timer = null;
     for (const node of [...state.nodes.keys()]) this.removeNode(state, node);
     for (const unpatch of state.unpatch.splice(0)) unpatch();
@@ -296,7 +298,7 @@ export class HeadlineController {
 
   private schedule(state: ViewState): void {
     if (!state.active || state.timer !== null) return;
-    state.timer = (state.view.containerEl.ownerDocument.defaultView ?? window).setTimeout(() => {
+    state.timer = state.win.setTimeout(() => {
       state.timer = null;
       if (!state.active) return;
       // Our decoration itself changes DOM; disconnect while reconciling so it

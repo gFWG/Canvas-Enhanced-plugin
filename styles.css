@@ -498,6 +498,8 @@ If your plugin does not need CSS, delete this file.
 .canvas-md-side-editor-panel[data-view-mode="live"] .cmside-pane-preview { display: none; }
 .canvas-md-side-editor-panel[data-view-mode="live"] .cmside-pane-editor { flex: 1 1 auto !important; }
 .canvas-md-side-editor-panel[data-view-mode="live"] .cmside-editor-root { border-right: none; }
+/* The side-panel toolbar already displays the note name. */
+.canvas-md-side-editor-panel .cmside-editor-root .cm-sizer > .inline-title { display: none; }
 .canvas-md-side-editor-panel .cmside-editor-root {
   flex: 1 1 auto;
   overflow: hidden;
